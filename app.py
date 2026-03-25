@@ -18,6 +18,7 @@ from streamlit_geolocation import streamlit_geolocation
 import math
 import pydeck as pdk
 from streamlit_autorefresh import st_autorefresh
+import cv2
 from camera_input_live import camera_input_live
 
 
@@ -72,32 +73,37 @@ def fetch_vin_data(vin):
 
 # --- NEW: BARCODE SCANNING HELPER ---
 def scan_vin_barcode(image_file):
-    """Safely handles the image file from streamlit-camera-input-live."""
     if image_file is None:
         return None
     
     try:
-        # 1. Convert the Streamlit UploadedFile/BytesIO to a NumPy array
         file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
         frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
         if frame is None:
             return None
 
-        # 2. Proceed with Grayscale conversion and Detection
+        # --- IMAGE ENHANCEMENT FOR MOBILE ---
+        # 1. Convert to Grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # Initialize Detector
+        # 2. Increase Contrast (helps with metallic VIN plates)
+        enhanced = cv2.equalizeHist(gray)
+        
+        # 3. Try to detect on both original and enhanced
         detector = cv2.barcode.BarcodeDetector()
         
-        # Detect and Decode
-        retval, decoded_info, decoded_type, points = detector.detectAndDecode(gray)
-        
-        if retval and decoded_info:
+        # Attempt 1: Standard
+        retval, decoded_info, _, _ = detector.detectAndDecode(gray)
+        if retval and decoded_info[0]:
             return decoded_info[0]
             
-    except Exception as e:
-        # Silently fail for individual frames to keep the app smooth
+        # Attempt 2: Enhanced (if first fails)
+        retval, decoded_info, _, _ = detector.detectAndDecode(enhanced)
+        if retval and decoded_info[0]:
+            return decoded_info[0]
+            
+    except Exception:
         pass
     return None
 
@@ -497,27 +503,30 @@ elif app_mode == "VIN Lookup":
                     st.warning("Please enter a valid 17-character VIN.")
 
         with tab_scan:
-            st.info("Point your camera at the VIN barcode. It will scan automatically.")
+            st.subheader("Video Viewfinder")
+            st.write("Align the barcode within the frame below. Ensure bright lighting.")
             
-            # Live camera feed
-            captured_image = camera_input_live()
+            # 1. Display the Live Camera Feed
+            # 'camera_input_live' already acts as the viewfinder
+            captured_image = camera_input_live(show_controls=True)
             
             if captured_image:
+                # 2. Show the "Captured Frame" for user feedback
+                # This confirms to the user what the AI is actually looking at
+                st.image(captured_image, caption="AI Analyzing Frame...", use_container_width=True)
+                
                 scanned_vin = scan_vin_barcode(captured_image)
                 
                 if scanned_vin:
-                    # --- AUTOMATIC CAPTURE LOGIC ---
                     st.success(f"✅ VIN Detected: **{scanned_vin}**")
-                    
-                    # Instead of waiting for a button, we trigger the fetch immediately
                     with st.spinner("Auto-fetching vehicle specs..."):
                         specs = get_vehicle_specs_from_vin(scanned_vin)
                         if specs:
                             st.session_state['autofill_data'] = specs
-                            # This refresh makes the data appear instantly in the UI
                             st.rerun() 
                 else:
-                    st.warning("Scanning... Hold steady and ensure good lighting.")
+                    # 3. Visual "Scanning" Indicator
+                    st.info("Searching for barcode... Try moving the phone closer or further away.")
 
         # Display fetched image and data if available
         if st.session_state.get('autofill_data'):
