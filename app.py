@@ -503,29 +503,24 @@ elif app_mode == "VIN Lookup":
 
         with tab_scan:
             st.subheader("Video Viewfinder")
-            st.write("Align the barcode within the frame below. Ensure bright lighting.")
+            st.write("Align the barcode within the frame. Use Landscape mode if needed.")
             
-            # 1. Display the Live Camera Feed
-            # 'camera_input_live' already acts as the viewfinder
-            captured_image = camera_input_live(show_controls=True)
+            # The viewfinder itself
+            captured_image = camera_input_live(show_controls=True, facing_mode="environment")
             
             if captured_image:
-                # 2. Show the "Captured Frame" for user feedback
-                # This confirms to the user what the AI is actually looking at
-                st.image(captured_image, caption="AI Analyzing Frame...", use_container_width=True)
+                # This acts as the "Review Screen" you requested
+                st.image(captured_image, caption="Current Viewfinder Frame", use_container_width=True)
                 
-                scanned_vin = scan_vin_barcode(captured_image)
+                with st.spinner("Decoding..."):
+                    scanned_vin = scan_vin_barcode(captured_image)
                 
                 if scanned_vin:
                     st.success(f"✅ VIN Detected: **{scanned_vin}**")
-                    with st.spinner("Auto-fetching vehicle specs..."):
-                        specs = get_vehicle_specs_from_vin(scanned_vin)
-                        if specs:
-                            st.session_state['autofill_data'] = specs
-                            st.rerun() 
+                    if fetch_vin_data(scanned_vin):
+                        st.rerun() 
                 else:
-                    # 3. Visual "Scanning" Indicator
-                    st.info("Searching for barcode... Try moving the phone closer or further away.")
+                    st.warning("No barcode found in this frame. Try adjusting the distance.")
 
         # Display fetched image and data if available
         if st.session_state.get('autofill_data'):
