@@ -17,8 +17,10 @@ import sqlite3
 from streamlit_geolocation import streamlit_geolocation
 import math
 import pydeck as pdk
+import cv2
 from streamlit_autorefresh import st_autorefresh
 from camera_input_live import camera_input_live
+from streamlit_back_camera_input import back_camera_input
 
 
 DB_FILE = "carco_data.db"
@@ -503,24 +505,27 @@ elif app_mode == "VIN Lookup":
 
         with tab_scan:
             st.subheader("Video Viewfinder")
-            st.write("Align the barcode within the frame. Use Landscape mode if needed.")
+            st.write("Align the barcode within the frame below. Ensure bright lighting.")
             
-            # The viewfinder itself
-            captured_image = camera_input_live(show_controls=True, facing_mode="environment")
+            # This component defaults to the BACK camera on mobile
+            # It returns an image only when you click/tap the video feed
+            captured_image = back_camera_input()
             
             if captured_image:
-                # This acts as the "Review Screen" you requested
-                st.image(captured_image, caption="Current Viewfinder Frame", use_container_width=True)
+                # This is the "Screen" showing what was captured
+                st.image(captured_image, caption="Last Captured Frame", use_container_width=True)
                 
-                with st.spinner("Decoding..."):
+                with st.spinner("Analyzing barcode..."):
                     scanned_vin = scan_vin_barcode(captured_image)
-                
-                if scanned_vin:
-                    st.success(f"✅ VIN Detected: **{scanned_vin}**")
-                    if fetch_vin_data(scanned_vin):
-                        st.rerun() 
-                else:
-                    st.warning("No barcode found in this frame. Try adjusting the distance.")
+                    
+                    if scanned_vin:
+                        st.success(f"✅ VIN Detected: **{scanned_vin}**")
+                        specs = get_vehicle_specs_from_vin(scanned_vin)
+                        if specs:
+                            st.session_state['autofill_data'] = specs
+                            st.rerun() 
+                    else:
+                        st.error("Could not read barcode. Please try again with more light or a different angle.")
 
         # Display fetched image and data if available
         if st.session_state.get('autofill_data'):
