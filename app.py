@@ -18,7 +18,6 @@ from streamlit_geolocation import streamlit_geolocation
 import math
 import pydeck as pdk
 from streamlit_autorefresh import st_autorefresh
-import cv2
 from camera_input_live import camera_input_live
 
 
