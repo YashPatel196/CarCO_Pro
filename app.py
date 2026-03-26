@@ -19,10 +19,6 @@ import math
 import pydeck as pdk
 import time
 from streamlit_autorefresh import st_autorefresh
-from camera_input_live import camera_input_live
-from streamlit_back_camera_input import back_camera_input
-from streamlit_js_eval import streamlit_js_eval # Add this to your imports
-
 
 DB_FILE = "carco_data.db"
 
@@ -73,90 +69,13 @@ def fetch_vin_data(vin):
         st.error(f"Error fetching data: {e}")
     return False
 
-# --- NEW: BARCODE SCANNING HELPER ---
-def scan_vin_barcode(image_file):
-    if image_file is None:
-        return None
-    
-    try:
-        # Convert Streamlit's UploadedFile/BytesIO to an OpenCV-compatible format
-        file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
-        frame = cv2.imdecode(file_bytes, 1)
-
-        if frame is None:
-            return None
-
-        # Convert to grayscale for better detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # Using the standard OpenCV Barcode Detector
-        detector = cv2.barcode.BarcodeDetector()
-        retval_en, decoded_info_en, _ = detector.detectAndDecode(gray)
-        
-        # Check if something was actually found
-        if retval_en and len(decoded_info_en) > 0:
-            vin = str(decoded_info_en[0]).strip()
-            # VINs are always 17 characters
-            if len(vin) == 17:
-                return vin
-            
-        # # Fallback: High contrast for difficult barcodes
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(gray)
-        retval_en, decoded_info_en, _ = detector.detectAndDecode(enhanced)
-        
-        if retval_en is True and len(decoded_info_en) > 0:
-            res_en = str(decoded_info_en[0])
-            if len(res_en.strip()) > 0:
-                return res_en
-
-    except Exception:
-        # Prevent the app from crashing during live feed
-        pass 
-    return None
-
 def main():
     # ... session state logic ...
 
    
     if st.session_state.current_tab == "VIN LOOKUP & SCANNER":
         st.title("🔍 Vehicle Identification Number (VIN) Lookup")
-        
-        col1, col2 = st.columns([1, 1])
-
-        with col1:
-            st.subheader("📸 Live VIN Scanner")
-            image = camera_input_live(show_controls=False)
-            
-            if image:
-                # 1. Show a loading state while processing the frame
-                with st.spinner("Scanning for barcode..."):
-                    scanned_vin = scan_vin_barcode(image)
-                
-                if scanned_vin:
-                    
-                    if fetch_vin_data(scanned_vin):
-                        st.success(f"Fetched data for VIN: {scanned_vin}")
-                        st.rerun()
-                    
-                    # 3. Automatically trigger the data fetch logic
-                    
-                    with st.status("Fetching vehicle data from NHTSA...", expanded=True) as status:
-                        fetch_vin_data(scanned_vin) # Assuming this is your API function
-                        status.update(label="Data Retrieval Complete!", state="complete", expanded=False)
-                    
-                    
-                    st.rerun()
-            else:
-                st.info("Align the vehicle barcode within the camera view.")
-
-        with col2:
-            st.subheader("⌨️ Manual Entry")
-            
-            vin_input = st.text_input("Enter 17-character VIN", value=st.session_state.get('vin_input', ""))
-            if st.button("Search Vehicle"):
-                fetch_vin_data(vin_input)
-
+             
 # --- 1. Load Bundle & Config ---
 
 st.set_page_config(page_title="CarCo", page_icon="🚗", layout="wide")
@@ -333,9 +252,6 @@ if 'username' not in st.session_state:
 # In your Dashboard Tab logic:
 if 'autofill_data' in st.session_state:
     data = st.session_state['autofill_data']
-    # Example: If your dashboard has a slider for 'Year'
-    st.write(f"Vehicle identified: {data.get('Year')} {data.get('Make')} {data.get('Model')}")
-    # Use these values as 'index' or 'value' in your st.selectbox or st.slider
 
 if not st.session_state['logged_in']:
     st.markdown("<br><br>", unsafe_allow_html=True)
@@ -473,109 +389,33 @@ if app_mode == "Introduction":
 
 # --- MODE 1.5: VIN LOOKUP PAGE ---
 elif app_mode == "VIN Lookup":
-    st.title("🔍 Intelligent VIN Scanner")
-    st.markdown("Automatic device detection: Laptop (Front) vs Mobile (Back)")
-
-    # 1. Automatic Device Detection (Mobile vs Desktop)
-    # Returns True if mobile/tablet, False if desktop
-    is_mobile = streamlit_js_eval(js_expressions=" /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ", key="device_check")
-
-    # 2. State Management for Scanning
-    if 'scanning_active' not in st.session_state:
-        st.session_state['scanning_active'] = False
-
-    # UI Tabs
-    tab_scan, tab_manual = st.tabs(["📷 Scan Barcode", "⌨️ Manual Entry"])
-
-    # --- TAB: SCAN BARCODE ---
-    with tab_scan:
-        col_ctrl, col_screen = st.columns([1, 2])
-        
-        with col_ctrl:
-            st.subheader("Scanner Controls")
-            if not st.session_state.get('scanning_active', False):
-                if st.button("🚀 START SCANNER", type="primary", width="stretch"):
-                    st.session_state['scanning_active'] = True
-                    st.rerun()
-            else:
-                if st.button("🛑 STOP SCANNER", type="secondary", width="stretch"):
-                    st.session_state['scanning_active'] = False
-                    st.rerun()
-            
-            device_icon = "📱" if is_mobile else "💻"
-            st.info(f"**Device:** {device_icon}")
-
-        with col_screen:
-            if st.session_state.get('scanning_active', False):
-                st.markdown("### 📽️ Live Viewfinder")
-                
-                # Use specific keys to prevent component conflicts
-                if is_mobile:
-                    captured_frame = back_camera_input(key="vin_mobile_cam")
-                else:
-                    captured_frame = camera_input_live(show_controls=False, key="vin_laptop_cam")
-
-                if captured_frame:
-                    try:
-                        # IMPORTANT: Create a stable copy of the buffer to avoid MediaFileStorageError
-                        # This is the "Algorithm" fix for the 78dd0...png error
-                        stable_buffer = io.BytesIO(captured_frame.getvalue())
-                        
-                        # Display the frame safely
-                        st.image(stable_buffer, caption="Align Barcode here", width="stretch")
-                        
-                        # Process the stable buffer
-                        scanned_vin = scan_vin_barcode(stable_buffer)
-                        
-                        if scanned_vin is not None:
-                            vin_str = str(scanned_vin).strip()
-                            if len(vin_str) == 17:
-                                st.success(f"✅ VIN Detected: **{vin_str}**")
-                                
-                                with st.spinner("🔍 Fetching specs for Intelligence Dashboard..."):
-                                    specs = get_vehicle_specs_from_vin(vin_str)
-                                    if specs:
-                                        # AUTOFILL: Map data exactly for your calculation logic
-                                        st.session_state['autofill_data'] = specs
-                                        st.session_state['vin_input'] = vin_str
-                                        
-                                        # Shutdown scanner and switch context
-                                        st.session_state['scanning_active'] = False
-                                        st.toast("Success! Data sent to Dashboard.")
-                                        time.sleep(1)
-                                        st.rerun()
-                    except Exception as e:
-                        # If a frame sync error occurs, skip this frame instead of crashing
-                        pass
-            else:
-                st.info("Scanner is OFF. Click 'Start Scanner' to begin.")
+    st.title("🔍 VIN Lookup")
 
     # --- TAB: MANUAL ENTRY (Features as before) ---
-    with tab_manual:
-        st.markdown("**Lookup by VIN**")
-        vin_input = st.text_input("Enter 17-character VIN", placeholder="e.g., 5UXZW4C55MDQGW...", key="manual_vin_entry")
-        
-        if st.button("Fetch & Autofill Specs"):
-            if len(vin_input) == 17:
-                with st.spinner("Searching database..."):
-                    specs = get_vehicle_specs_from_vin(vin_input)
-                    if specs and specs.get("Make"):
-                        st.session_state['autofill_data'] = {
-                            "Make": specs.get("Make"),
-                            "Model": specs.get("Model"),
-                            "Year": specs.get("Year"),
-                            "Engine": specs.get("Engine"),
-                            "Cylinders": specs.get("Cylinders"),
-                            "Fuel": specs.get("Fuel"),
-                            "Transmission": specs.get("Transmission"),
-                            "Class": specs.get("Class")
-                        }
-                        st.success(f"✅ Vehicle specs for {specs['Make']} {specs['Model']} synced!")
-                        st.rerun()
-                    else:
-                        st.error("Vehicle not found. Please check the VIN.")
-            else:
-                st.warning("Please enter a valid 17-character VIN.")
+    st.markdown("**Lookup by VIN**")
+    vin_input = st.text_input("Enter 17-character VIN", placeholder="e.g., 5UXZW4C55MDQGW...", key="manual_vin_entry")
+    
+    if st.button("Fetch & Autofill Specs"):
+        if len(vin_input) == 17:
+            with st.spinner("Searching database..."):
+                specs = get_vehicle_specs_from_vin(vin_input)
+                if specs and specs.get("Make"):
+                    st.session_state['autofill_data'] = {
+                        "Make": specs.get("Make"),
+                        "Model": specs.get("Model"),
+                        "Year": specs.get("Year"),
+                        "Engine": specs.get("Engine"),
+                        "Cylinders": specs.get("Cylinders"),
+                        "Fuel": specs.get("Fuel"),
+                        "Transmission": specs.get("Transmission"),
+                        "Class": specs.get("Class")
+                    }
+                    st.success(f"✅ Vehicle specs for {specs['Make']} {specs['Model']} synced!")
+                    st.rerun()
+                else:
+                    st.error("Vehicle not found. Please check the VIN.")
+        else:
+            st.warning("Please enter a valid 17-character VIN.")
 
     # 3. Global Success View (Displaying fetched data)
     if st.session_state.get('autofill_data'):
