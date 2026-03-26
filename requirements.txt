@@ -96,6 +96,7 @@ streamlit-autorefresh==1.0.1
 streamlit-back-camera-input==0.1.1
 streamlit-camera-input-live==0.2.0
 streamlit-geolocation==0.0.10
+streamlit-js-eval==1.0.0
 tenacity==9.1.4
 threadpoolctl==3.6.0
 tinycss2==1.4.0
