@@ -17,6 +17,7 @@ import sqlite3
 from streamlit_geolocation import streamlit_geolocation
 import math
 import pydeck as pdk
+import cv2
 import time
 from streamlit_autorefresh import st_autorefresh
 from camera_input_live import camera_input_live
@@ -91,24 +92,24 @@ def scan_vin_barcode(image_file):
         
         # Using the standard OpenCV Barcode Detector
         detector = cv2.barcode.BarcodeDetector()
-        retval, decoded_info, _ = detector.detectAndDecode(gray)
+        retval_en, decoded_info_en, _ = detector.detectAndDecode(gray)
         
         # Check if something was actually found
-        if retval and len(decoded_info) > 0:
-            vin = str(decoded_info[0]).strip()
+        if retval_en and len(decoded_info_en) > 0:
+            vin = str(decoded_info_en[0]).strip()
             # VINs are always 17 characters
             if len(vin) == 17:
                 return vin
             
         # # Fallback: High contrast for difficult barcodes
-        # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        # enhanced = clahe.apply(gray)
-        # retval_en, decoded_info_en, _ = detector.detectAndDecode(enhanced)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
+        retval_en, decoded_info_en, _ = detector.detectAndDecode(enhanced)
         
-        # if retval_en is True and len(decoded_info_en) > 0:
-        #     res_en = str(decoded_info_en[0])
-        #     if len(res_en.strip()) > 0:
-        #         return res_en
+        if retval_en is True and len(decoded_info_en) > 0:
+            res_en = str(decoded_info_en[0])
+            if len(res_en.strip()) > 0:
+                return res_en
 
     except Exception:
         # Prevent the app from crashing during live feed
