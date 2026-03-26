@@ -17,7 +17,6 @@ import sqlite3
 from streamlit_geolocation import streamlit_geolocation
 import math
 import pydeck as pdk
-import cv2
 import time
 from streamlit_autorefresh import st_autorefresh
 from camera_input_live import camera_input_live
