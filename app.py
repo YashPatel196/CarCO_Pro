@@ -18,6 +18,7 @@ from streamlit_geolocation import streamlit_geolocation
 import math
 import pydeck as pdk
 import cv2
+import time
 from streamlit_autorefresh import st_autorefresh
 from camera_input_live import camera_input_live
 from streamlit_back_camera_input import back_camera_input
@@ -79,40 +80,40 @@ def scan_vin_barcode(image_file):
         return None
     
     try:
-        # 1. Improved conversion from Streamlit to OpenCV
-        import numpy as np
-        from PIL import Image
-        import cv2
-        
-        img = Image.open(image_file)
-        frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        
-        if frame is None: return None
+        # Convert Streamlit's UploadedFile/BytesIO to an OpenCV-compatible format
+        file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
+        frame = cv2.imdecode(file_bytes, 1)
 
-        # 2. Convert to Grayscale
+        if frame is None:
+            return None
+
+        # Convert to grayscale for better detection
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # 3. Use the newer 3-value unpack for 2026 OpenCV
+        # Using the standard OpenCV Barcode Detector
         detector = cv2.barcode.BarcodeDetector()
         retval, decoded_info, _ = detector.detectAndDecode(gray)
         
-        if retval and len(decoded_info)>0:
-            result = decoded_info[0]
-            if result: # Ensure the string itself isn't empty
-                return result
-
-        # 4. Enhanced Fallback for difficult/real-world barcodes
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(gray)
-        retval, decoded_info, _ = detector.detectAndDecode(enhanced)
-        
+        # Check if something was actually found
         if retval and len(decoded_info) > 0:
-            result = decoded_info[0]
-            if result:
-                return result
+            vin = str(decoded_info[0]).strip()
+            # VINs are always 17 characters
+            if len(vin) == 17:
+                return vin
             
-    except Exception as e:
-        print(f"Scan error: {e}")
+        # # Fallback: High contrast for difficult barcodes
+        # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        # enhanced = clahe.apply(gray)
+        # retval_en, decoded_info_en, _ = detector.detectAndDecode(enhanced)
+        
+        # if retval_en is True and len(decoded_info_en) > 0:
+        #     res_en = str(decoded_info_en[0])
+        #     if len(res_en.strip()) > 0:
+        #         return res_en
+
+    except Exception:
+        # Prevent the app from crashing during live feed
+        pass 
     return None
 
 def main():
@@ -330,9 +331,12 @@ if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 if 'username' not in st.session_state:
     st.session_state['username'] = ''
-# Initialize session state for fetched data
-if 'autofill_data' not in st.session_state:
-    st.session_state['autofill_data'] = None
+# In your Dashboard Tab logic:
+if 'autofill_data' in st.session_state:
+    data = st.session_state['autofill_data']
+    # Example: If your dashboard has a slider for 'Year'
+    st.write(f"Vehicle identified: {data.get('Year')} {data.get('Make')} {data.get('Model')}")
+    # Use these values as 'index' or 'value' in your st.selectbox or st.slider
 
 if not st.session_state['logged_in']:
     st.markdown("<br><br>", unsafe_allow_html=True)
@@ -490,73 +494,62 @@ elif app_mode == "VIN Lookup":
         
         with col_ctrl:
             st.subheader("Scanner Controls")
-            # Logic for Start/Stop buttons
-            if not st.session_state['scanning_active']:
-                if st.button("🚀 START SCANNER", type="primary", use_container_width="stretch"):
+            if not st.session_state.get('scanning_active', False):
+                if st.button("🚀 START SCANNER", type="primary", width="stretch"):
                     st.session_state['scanning_active'] = True
                     st.rerun()
             else:
-                if st.button("🛑 STOP SCANNER", type="secondary", use_container_width="stretch"):
+                if st.button("🛑 STOP SCANNER", type="secondary", width="stretch"):
                     st.session_state['scanning_active'] = False
                     st.rerun()
             
-            # Show Device Info
             device_icon = "📱" if is_mobile else "💻"
-            device_name = "Mobile (Back Cam)" if is_mobile else "Laptop (Front Cam)"
-            st.info(f"**Detected Device:** {device_icon} {device_name}")
+            st.info(f"**Device:** {device_icon}")
 
         with col_screen:
-            if st.session_state['scanning_active']:
+            if st.session_state.get('scanning_active', False):
                 st.markdown("### 📽️ Live Viewfinder")
-                # Automatically pick the right camera component
+                
+                # Use specific keys to prevent component conflicts
                 if is_mobile:
-                    # Uses the dedicated back-camera component for mobile
                     captured_frame = back_camera_input(key="vin_mobile_cam")
                 else:
-                    # Uses the live stream component for laptop
                     captured_frame = camera_input_live(show_controls=False, key="vin_laptop_cam")
 
                 if captured_frame:
-                    # 1. Display the Viewfinder Screen
-                    st.image(captured_frame, width="stretch")
-                    
-                    # 2. Fast Processing (Skip spinner to prevent UI flicker)
-                    with st.spinner("Decoding..."):
-                        scanned_vin = scan_vin_barcode(captured_frame)
-                    
-                    if scanned_vin:
-                        # Basic validation: VINs are 17 characters
-                        # If your barcodes are shorter (like generic ones), remove the '== 17' check
-                        if len(scanned_vin) == 17:
-                            st.success(f"🎯 VIN Detected: **{scanned_vin}**")
-                            
-                            # Stop camera and fetch detailed specs
-                            st.session_state['scanning_active'] = False
-                            
-                            with st.spinner("Fetching vehicle specifications..."):
-                                specs = get_vehicle_specs_from_vin(scanned_vin)
+                    try:
+                        # IMPORTANT: Create a stable copy of the buffer to avoid MediaFileStorageError
+                        # This is the "Algorithm" fix for the 78dd0...png error
+                        stable_buffer = io.BytesIO(captured_frame.getvalue())
+                        
+                        # Display the frame safely
+                        st.image(stable_buffer, caption="Align Barcode here", width="stretch")
+                        
+                        # Process the stable buffer
+                        scanned_vin = scan_vin_barcode(stable_buffer)
+                        
+                        if scanned_vin is not None:
+                            vin_str = str(scanned_vin).strip()
+                            if len(vin_str) == 17:
+                                st.success(f"✅ VIN Detected: **{vin_str}**")
                                 
-                                if specs:
-                                    # Map to Dashboard Keys
-                                    st.session_state['autofill_data'] = {
-                                        "Make": specs.get("Make"),
-                                        "Model": specs.get("Model"),
-                                        "Year": specs.get("Year"),
-                                        "Engine": specs.get("Engine"),
-                                        "Cylinders": specs.get("Cylinders"),
-                                        "Fuel": specs.get("Fuel"),
-                                        "Transmission": specs.get("Transmission"),
-                                        "Class": specs.get("Class")
-                                    }
-                                    st.balloons()
-                                    st.rerun()
-                        else:
-                            st.warning(f"Detected: {scanned_vin} (Invalid VIN length)")
-                    else:
-                        # Visual hint to help the user
-                        st.caption("Searching for barcode... Try moving closer or adjusting light.")
+                                with st.spinner("🔍 Fetching specs for Intelligence Dashboard..."):
+                                    specs = get_vehicle_specs_from_vin(vin_str)
+                                    if specs:
+                                        # AUTOFILL: Map data exactly for your calculation logic
+                                        st.session_state['autofill_data'] = specs
+                                        st.session_state['vin_input'] = vin_str
+                                        
+                                        # Shutdown scanner and switch context
+                                        st.session_state['scanning_active'] = False
+                                        st.toast("Success! Data sent to Dashboard.")
+                                        time.sleep(1)
+                                        st.rerun()
+                    except Exception as e:
+                        # If a frame sync error occurs, skip this frame instead of crashing
+                        pass
             else:
-                st.info("Scanner is currently OFF. Click 'Start Scanner' to begin.")
+                st.info("Scanner is OFF. Click 'Start Scanner' to begin.")
 
     # --- TAB: MANUAL ENTRY (Features as before) ---
     with tab_manual:
@@ -595,7 +588,7 @@ elif app_mode == "VIN Lookup":
         car_img_url = get_car_image(s.get('Make', ''), s.get('Model', ''))
         
         with res_col1:
-            st.image(car_img_url, use_container_width="stretch", caption=f"{s.get('Make')} {s.get('Model')}")
+            st.image(car_img_url, width="stretch", caption=f"{s.get('Make')} {s.get('Model')}")
         with res_col2:
             st.markdown(f"""
                 <div class="vin-card">
@@ -610,7 +603,7 @@ elif app_mode == "VIN Lookup":
             </div>
             """, unsafe_allow_html=True)
             
-            if st.button("🗑️ Clear Data", use_container_width="stretch"):
+            if st.button("🗑️ Clear Data", width="stretch"):
                 st.session_state['autofill_data'] = None
                 st.rerun()
 
@@ -777,7 +770,7 @@ elif app_mode == "Intelligence Dashboard":
                 x=alt.X('Type', sort=None), y='CO2',
                 color=alt.Color('Color', legend=None, scale=alt.Scale(domain=['Ref', 'You'], range=['#cfd8dc', g_color]))
             ).properties(height=250)
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
 
         with g_col2:
             st.markdown("**Efficiency Composition**")
@@ -1048,7 +1041,7 @@ elif app_mode == "Eco Leaderboard/Compare":
                 "Timestamp": st.column_config.DateColumn("Date Analyzed")
             },
             hide_index=True,
-            use_container_width="stretch"
+            width="stretch"
         )
 
 # --- MODE 4: LIVE TRIP TRACKER ---
@@ -1272,7 +1265,7 @@ elif app_mode == "Live Trip Tracker":
             # Render the table with perfectly formatted headers
             st.dataframe(
                 history_df,
-                use_container_width="stretch",
+                width="stretch",
                 hide_index=True,
                 column_config={
                     "date": st.column_config.TextColumn(
