@@ -17,9 +17,11 @@ import sqlite3
 from streamlit_geolocation import streamlit_geolocation
 import math
 import pydeck as pdk
+import cv2
 from streamlit_autorefresh import st_autorefresh
 from camera_input_live import camera_input_live
 from streamlit_back_camera_input import back_camera_input
+from streamlit_js_eval import streamlit_js_eval # Add this to your imports
 
 
 DB_FILE = "carco_data.db"
@@ -77,40 +79,43 @@ def scan_vin_barcode(image_file):
         return None
     
     try:
+        # Convert Streamlit image to OpenCV format
         file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
         frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if frame is None: return None
 
-        if frame is None:
-            return None
-
-        # --- IMAGE ENHANCEMENT FOR MOBILE ---
-        # 1. Convert to Grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # 1. Pre-processing: Convert to Grayscale and Resize for speed
+        # Smaller images process faster without losing barcode definition
+        height, width = frame.shape[:2]
+        new_width = 800
+        ratio = new_width / float(width)
+        resized = cv2.resize(frame, (new_width, int(height * ratio)))
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         
-        # 2. Increase Contrast (helps with metallic VIN plates)
-        enhanced = cv2.equalizeHist(gray)
-        
-        # 3. Try to detect on both original and enhanced
         detector = cv2.barcode.BarcodeDetector()
+
+        # Attempt 1: Fast Scan (Standard Grayscale)
+        retval, decoded_info, _ = detector.detectAndDecode(gray)
+        if retval and decoded_info[0]:
+            return decoded_info[0]
+
+        # Attempt 2: High Contrast (For metallic plates or screens)
+        # Use CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
         
-        # Attempt 1: Standard
-        retval, decoded_info, _, _ = detector.detectAndDecode(gray)
+        retval, decoded_info, _ = detector.detectAndDecode(enhanced)
         if retval and decoded_info[0]:
             return decoded_info[0]
             
-        # Attempt 2: Enhanced (if first fails)
-        retval, decoded_info, _, _ = detector.detectAndDecode(enhanced)
-        if retval and decoded_info[0]:
-            return decoded_info[0]
-            
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Scan error: {e}")
     return None
 
 def main():
     # ... session state logic ...
 
-    # Look for your tab selection logic:
+   
     if st.session_state.current_tab == "VIN LOOKUP & SCANNER":
         st.title("🔍 Vehicle Identification Number (VIN) Lookup")
         
@@ -126,31 +131,31 @@ def main():
                     scanned_vin = scan_vin_barcode(image)
                 
                 if scanned_vin:
-                    # Now this call will work because the function is defined!
+                    
                     if fetch_vin_data(scanned_vin):
                         st.success(f"Fetched data for VIN: {scanned_vin}")
                         st.rerun()
                     
                     # 3. Automatically trigger the data fetch logic
-                    # This simulates clicking the "Search" button automatically
+                    
                     with st.status("Fetching vehicle data from NHTSA...", expanded=True) as status:
                         fetch_vin_data(scanned_vin) # Assuming this is your API function
                         status.update(label="Data Retrieval Complete!", state="complete", expanded=False)
                     
-                    # Force a rerun to show the results in the dashboard
+                    
                     st.rerun()
             else:
                 st.info("Align the vehicle barcode within the camera view.")
 
         with col2:
             st.subheader("⌨️ Manual Entry")
-            # Ensure the text input uses the session state from the scanner
+            
             vin_input = st.text_input("Enter 17-character VIN", value=st.session_state.get('vin_input', ""))
             if st.button("Search Vehicle"):
                 fetch_vin_data(vin_input)
 
 # --- 1. Load Bundle & Config ---
-# Note: st.set_page_config must be the first Streamlit command
+
 st.set_page_config(page_title="CarCo", page_icon="🚗", layout="wide")
 
 @st.cache_resource
@@ -169,7 +174,7 @@ except FileNotFoundError:
 if 'app_loaded' not in st.session_state:
     loading_placeholder = st.empty()
     
-    # CSS for the animation
+
     animation_html = """
         <style>
             @keyframes drive { 0% { transform: translateX(-100vw); } 100% { transform: translateX(100vw); } }
@@ -230,8 +235,7 @@ if 'app_loaded' not in st.session_state:
     loading_placeholder.empty()
     st.session_state['app_loaded'] = True
 
-# --- 3. THEME-AWARE PROFESSIONAL STYLING ---
-# --- 3. Professional Styling ---
+# --- 3.STYLING ---
 st.markdown("""
     <style>
     /* 1. Makes the 'White Boxes' adapt to the theme (Turns Black in Dark Mode) */
@@ -245,13 +249,13 @@ st.markdown("""
         margin-bottom: 20px;
     }
 
-    /* 2. Fixes invisible text by forcing it to follow the theme color */
+   
     .report-card h1, .report-card h2, .report-card h3, .report-card p,
     .vin-row, .vin-label, .vin-value {
         color: var(--text-color) !important;
     }
 
-    /* 3. YOUR ORIGINAL BUTTON STYLING (Unchanged) */
+    /* 3.BUTTON STYLING (Unchanged) */
     .stButton>button {
         width: 100%; border-radius: 12px; height: 3em;
         background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
@@ -412,7 +416,7 @@ def get_car_image(make, model):
 with st.sidebar:
     st.write(f"👤 **{st.session_state['username']}**")
     # Added Navigation
-    # In your existing Navigation section:
+    
     app_mode = st.radio("Navigate", [
         "Introduction", 
         "VIN Lookup", 
@@ -463,99 +467,139 @@ if app_mode == "Introduction":
 
 # --- MODE 1.5: VIN LOOKUP PAGE ---
 elif app_mode == "VIN Lookup":
-    st.title("VIN Lookup & Scanner")
-    st.markdown("Use this tool to automatically fetch your vehicle's specifications and a reference image.")
-    
-    vin_container = st.container(border=True)
-    tab_manual, tab_scan = st.tabs(["Manual Entry", "📷 Scan Barcode"])
-    with vin_container:
-        guide_col, lookup_col = st.columns([1.2, 1])
+    st.title("🔍 Intelligent VIN Scanner")
+    st.markdown("Automatic device detection: Laptop (Front) vs Mobile (Back)")
+
+    # 1. Automatic Device Detection (Mobile vs Desktop)
+    # Returns True if mobile/tablet, False if desktop
+    is_mobile = streamlit_js_eval(js_expressions=" /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ", key="device_check")
+
+    # 2. State Management for Scanning
+    if 'scanning_active' not in st.session_state:
+        st.session_state['scanning_active'] = False
+
+    # UI Tabs
+    tab_scan, tab_manual = st.tabs(["📷 Scan Barcode", "⌨️ Manual Entry"])
+
+    # --- TAB: SCAN BARCODE ---
+    with tab_scan:
+        col_ctrl, col_screen = st.columns([1, 2])
         
-        with guide_col:
-            st.markdown("**Where can I find my vehicle's VIN?**")
-            
-            # Safely check for the image to prevent the MediaFileStorageError
-            img_path = "vin_guide.jpeg"
-            fallback_path = "WhatsApp Image 2026-03-21 at 11.47.20 AM.jpeg"
-            
-            if os.path.exists(img_path):
-                st.image(img_path, use_container_width=True)
-            elif os.path.exists(fallback_path):
-                st.image(fallback_path, use_container_width=True)
-            else:
-                st.warning("⚠️ **Guide Image Missing**")
-                st.info("Please place the uploaded image in the same folder as `app.py` and name it `vin_guide.jpeg`.")
-                
-        with lookup_col:
-            st.markdown("**Lookup by VIN**")
-            vin_input = st.text_input("Enter 17-character VIN", placeholder="e.g., 5UXZW4C55MDQGW...")
-            
-            if st.button("Fetch & Autofill Specs"):
-                if len(vin_input) == 17:
-                    with st.spinner("Searching database..."):
-                        specs = get_vehicle_specs_from_vin(vin_input)
-                        if specs and specs.get("Make"):
-                            st.session_state['autofill_data'] = specs
-                            st.success(f"Successfully Loaded Data!")
-                        else:
-                            st.error("Vehicle not found. Please check the VIN.")
-                else:
-                    st.warning("Please enter a valid 17-character VIN.")
-
-        with tab_scan:
-            st.subheader("Video Viewfinder")
-            st.write("Align the barcode within the frame below. Ensure bright lighting.")
-            
-            # This component defaults to the BACK camera on mobile
-            # It returns an image only when you click/tap the video feed
-            captured_image = back_camera_input()
-            
-            if captured_image:
-                # This is the "Screen" showing what was captured
-                st.image(captured_image, caption="Last Captured Frame", use_container_width=True)
-                
-                with st.spinner("Analyzing barcode..."):
-                    scanned_vin = scan_vin_barcode(captured_image)
-                    
-                    if scanned_vin:
-                        st.success(f"✅ VIN Detected: **{scanned_vin}**")
-                        specs = get_vehicle_specs_from_vin(scanned_vin)
-                        if specs:
-                            st.session_state['autofill_data'] = specs
-                            st.rerun() 
-                    else:
-                        st.error("Could not read barcode. Please try again with more light or a different angle.")
-
-        # Display fetched image and data if available
-        if st.session_state.get('autofill_data'):
-            s = st.session_state['autofill_data']
-            st.markdown("---")
-            
-            # Fetch Unsplash Image using your function
-            car_img_url = get_car_image(s.get('Make', ''), s.get('Model', ''))
-            
-            img_subcol, text_subcol = st.columns([1, 1])
-            with img_subcol:
-                st.image(car_img_url, caption=f"{s.get('Year', '')} {s.get('Make', '')} {s.get('Model', '')}", use_container_width=True)
-            with text_subcol:
-                st.markdown(f"""
-                    <div class="vin-card" style="margin-top:0;">
-                        <div class="vin-header">DATABASE RECORD</div>
-                        <div class="vin-row"><span class="vin-label">Model</span><span class="vin-value">{s.get('Year', '')} {s.get('Make', '')}</span></div>
-                        <div class="vin-row"><span class="vin-label">Trim</span><span class="vin-value">{s.get('Model', '')}</span></div>
-                        <div class="vin-row"><span class="vin-label">Engine</span><span class="vin-value">{s.get('Engine', 'N/A')}L / {s.get('Cylinders', 'N/A')} Cyl</span></div>
-                        <div class="vin-row"><span class="vin-label">Fuel</span><span class="vin-value">{s.get('Fuel', 'N/A')}</span></div>
-                        <div class="vin-row" style="border:none;"><span class="vin-label">Class</span><span class="vin-value">{s.get('Class', 'N/A')}</span></div>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-                if st.button("Clear Vehicle Data", type="secondary"):
-                    st.session_state['autofill_data'] = None
+        with col_ctrl:
+            st.subheader("Scanner Controls")
+            # Logic for Start/Stop buttons
+            if not st.session_state['scanning_active']:
+                if st.button("🚀 START SCANNER", type="primary", use_container_width="stretch"):
+                    st.session_state['scanning_active'] = True
                     st.rerun()
+            else:
+                if st.button("🛑 STOP SCANNER", type="secondary", use_container_width="stretch"):
+                    st.session_state['scanning_active'] = False
+                    st.rerun()
+            
+            # Show Device Info
+            device_icon = "📱" if is_mobile else "💻"
+            device_name = "Mobile (Back Cam)" if is_mobile else "Laptop (Front Cam)"
+            st.info(f"**Detected Device:** {device_icon} {device_name}")
+
+        with col_screen:
+            if st.session_state['scanning_active']:
+                st.markdown("### 📽️ Live Viewfinder")
+                # Automatically pick the right camera component
+                if is_mobile:
+                    # Uses the dedicated back-camera component for mobile
+                    captured_frame = back_camera_input(key="vin_mobile_cam")
+                else:
+                    # Uses the live stream component for laptop
+                    captured_frame = camera_input_live(show_controls=False, key="vin_laptop_cam")
+
+                if captured_frame:
+                    # Display the "Screen" of what the camera sees
+                    st.image(captured_frame, caption="Align Barcode here", use_container_width="stretch")
                     
-    # Helpful prompt to move to the next page once data is loaded
+                    # Instant Barcode Processing
+                    with st.spinner("Decoding..."):
+                        scanned_vin = scan_vin_barcode(captured_frame)
+                        
+                        if scanned_vin and len(scanned_vin) == 17:
+                            st.success(f"✅ VIN Detected: **{scanned_vin}**")
+                            # Stop scanning immediately
+                            st.session_state['scanning_active'] = False
+                            # Fetch data and auto-insert into Dashboard state
+                            specs = get_vehicle_specs_from_vin(scanned_vin)
+                            if specs:
+                                st.session_state['autofill_data'] = {
+                                    "Make": specs.get("Make"),
+                                    "Model": specs.get("Model"),
+                                    "Year": specs.get("Year"),
+                                    "Engine": specs.get("Engine"),
+                                    "Cylinders": specs.get("Cylinders"),
+                                    "Fuel": specs.get("Fuel"),
+                                    "Transmission": specs.get("Transmission"),
+                                    "Class": specs.get("Class")
+                                }
+                                st.success("✅ Data synced to Intelligence Dashboard!")
+                                st.rerun()
+            else:
+                st.info("Scanner is currently OFF. Click 'Start Scanner' to begin.")
+
+    # --- TAB: MANUAL ENTRY (Features as before) ---
+    with tab_manual:
+        st.markdown("**Lookup by VIN**")
+        vin_input = st.text_input("Enter 17-character VIN", placeholder="e.g., 5UXZW4C55MDQGW...", key="manual_vin_entry")
+        
+        if st.button("Fetch & Autofill Specs"):
+            if len(vin_input) == 17:
+                with st.spinner("Searching database..."):
+                    specs = get_vehicle_specs_from_vin(vin_input)
+                    if specs and specs.get("Make"):
+                        st.session_state['autofill_data'] = {
+                            "Make": specs.get("Make"),
+                            "Model": specs.get("Model"),
+                            "Year": specs.get("Year"),
+                            "Engine": specs.get("Engine"),
+                            "Cylinders": specs.get("Cylinders"),
+                            "Fuel": specs.get("Fuel"),
+                            "Transmission": specs.get("Transmission"),
+                            "Class": specs.get("Class")
+                        }
+                        st.success(f"✅ Vehicle specs for {specs['Make']} {specs['Model']} synced!")
+                        st.rerun()
+                    else:
+                        st.error("Vehicle not found. Please check the VIN.")
+            else:
+                st.warning("Please enter a valid 17-character VIN.")
+
+    # 3. Global Success View (Displaying fetched data)
     if st.session_state.get('autofill_data'):
-        st.success("Vehicle data saved! Navigate to the **Intelligence Dashboard** on the left to analyze emissions.")
+        s = st.session_state['autofill_data']
+        st.divider()
+        
+        # Display the visual confirmation
+        res_col1, res_col2 = st.columns([1, 1.2])
+        car_img_url = get_car_image(s.get('Make', ''), s.get('Model', ''))
+        
+        with res_col1:
+            st.image(car_img_url, use_container_width="stretch", caption=f"{s.get('Make')} {s.get('Model')}")
+        with res_col2:
+            st.markdown(f"""
+                <div class="vin-card">
+                <div class="vin-header">VEHICLE SPECS LOADED</div>
+                <div class="vin-row"><span class="vin-label">Year / Make</span><span class="vin-value">{s.get('Year', 'N/A')} {s.get('Make', 'N/A')}</span></div>
+                <div class="vin-row"><span class="vin-label">Model</span><span class="vin-value">{s.get('Model', 'N/A')}</span></div>
+                <div class="vin-row"><span class="vin-label">Engine</span><span class="vin-value">{s.get('Engine', 'N/A')}L</span></div>
+                <div class="vin-row"><span class="vin-label">Cylinders</span><span class="vin-value">{s.get('Cylinders', 'N/A')}</span></div>
+                <div class="vin-row"><span class="vin-label">Fuel Type</span><span class="vin-value">{s.get('Fuel', 'N/A')}</span></div>
+                <div class="vin-row"><span class="vin-label">Transmission</span><span class="vin-value">{s.get('Transmission', 'N/A')}</span></div>
+                <div class="vin-row" style="border:none;"><span class="vin-label">Body Class</span><span class="vin-value">{s.get('Class', 'N/A')}</span></div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("🗑️ Clear Data", use_container_width="stretch"):
+                st.session_state['autofill_data'] = None
+                st.rerun()
+
+        st.success("✅ Data is now automatically inserted into the **Intelligence Dashboard**. Head there to see the results!")
 
 # --- MODE 2: MAIN DASHBOARD ---
 elif app_mode == "Intelligence Dashboard":
@@ -735,11 +779,10 @@ elif app_mode == "Intelligence Dashboard":
             ai_advice = get_gemini_suggestions(engine, fuel, v_class, specific_trans, mid_p, grade)
         st.info(ai_advice)
         
-# --- NEW INTERACTIVE LEADERBOARD LOGIC ---
+# --- INTERACTIVE LEADERBOARD LOGIC ---
         st.divider()
         st.markdown("### 🏆 Join the Eco Leaderboard")
         
-        # --- UPDATED INTERACTIVE LEADERBOARD LOGIC ---
         def update_and_show_leaderboard(user, vehicle, co2):
             leaderboard_file = 'leaderboard.csv'
             new_entry = {
@@ -815,7 +858,7 @@ elif app_mode == "Intelligence Dashboard":
                     else:
                         st.warning("Please enter a vehicle name.")
 
- # --- 1. THE TEMPLATE (Must be defined before usage) ---
+ # --- 1. PDF ---
     class CarCO_Report(FPDF):
         def header(self):
             self.set_fill_color(40, 44, 52) 
@@ -884,10 +927,9 @@ elif app_mode == "Intelligence Dashboard":
         
         return bytes(pdf.output(dest='S'))
 
-    # --- 3. THE TRIGGER (Inside your app logic) ---
+    # --- 3. THE TRIGGER ---
     st.divider()
 
-    # Ensure this only runs if your variables (grade, score, etc.) have been calculated!
     try:
         v_specs_data = {
             "Vehicle Class": v_class,
@@ -938,7 +980,6 @@ elif app_mode == "Eco Leaderboard/Compare":
         st.markdown("### ⚔️ Compare ")
         st.info("Select exactly two vehicles from the list below to compare them head-to-head.")
         
-        # Create a unique label for selection (User + Vehicle)
         df_lb['Select_Label'] = df_lb['User'] + " (" + df_lb['Vehicle'] + ")"
         
         # Multiselect widget
@@ -953,12 +994,9 @@ elif app_mode == "Eco Leaderboard/Compare":
             # Filter the dataframe for selected cars
             compare_df = df_lb[df_lb['Select_Label'].isin(selected_cars)]
             
-            # Create two columns for the side-by-side "Battle"
             col1, col2 = st.columns(2)
             
             for i, (idx, row) in enumerate(compare_df.iterrows()):
-                # Determine color based on emission (Lower is greener)
-                # This is a simple logic; you can also recalculate Grades here
                 current_col = col1 if i == 0 else col2
                 with current_col:
                     st.markdown(f"""
@@ -971,14 +1009,11 @@ elif app_mode == "Eco Leaderboard/Compare":
                         </div>
                     """, unsafe_allow_html=True)
             
-            # Add a "Winner" Badge
             winner = compare_df.loc[compare_df['CO2 Emission (g/km)'].idxmin()]
             
             st.success(f"**{winner['User']}** wins with the more eco-friendly **{winner['Vehicle']}**!")
             st.divider()
 
-        # Sort by lowest CO2 emission
-        # We no longer drop duplicates by User, so every vehicle stays visible
         df_lb = df_lb.sort_values(by="CO2 Emission (g/km)", ascending=True).reset_index(drop=True)
         
         # Add Rank numbering and medals
@@ -998,7 +1033,7 @@ elif app_mode == "Eco Leaderboard/Compare":
                 "Timestamp": st.column_config.DateColumn("Date Analyzed")
             },
             hide_index=True,
-            use_container_width=True
+            use_container_width="stretch"
         )
 
 # --- MODE 4: LIVE TRIP TRACKER ---
@@ -1222,7 +1257,7 @@ elif app_mode == "Live Trip Tracker":
             # Render the table with perfectly formatted headers
             st.dataframe(
                 history_df,
-                use_container_width=True,
+                use_container_width="stretch",
                 hide_index=True,
                 column_config={
                     "date": st.column_config.TextColumn(
