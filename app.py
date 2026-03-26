@@ -17,6 +17,7 @@ import sqlite3
 from streamlit_geolocation import streamlit_geolocation
 import math
 import pydeck as pdk
+import cv2
 from streamlit_autorefresh import st_autorefresh
 from camera_input_live import camera_input_live
 from streamlit_back_camera_input import back_camera_input
@@ -78,34 +79,37 @@ def scan_vin_barcode(image_file):
         return None
     
     try:
-        # Convert Streamlit image to OpenCV format
-        file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
-        frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        # 1. Improved conversion from Streamlit to OpenCV
+        import numpy as np
+        from PIL import Image
+        import cv2
+        
+        img = Image.open(image_file)
+        frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        
         if frame is None: return None
 
-        # 1. Pre-processing: Convert to Grayscale and Resize for speed
-        # Smaller images process faster without losing barcode definition
-        height, width = frame.shape[:2]
-        new_width = 800
-        ratio = new_width / float(width)
-        resized = cv2.resize(frame, (new_width, int(height * ratio)))
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        # 2. Convert to Grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
+        # 3. Use the newer 3-value unpack for 2026 OpenCV
         detector = cv2.barcode.BarcodeDetector()
-
-        # Attempt 1: Fast Scan (Standard Grayscale)
         retval, decoded_info, _ = detector.detectAndDecode(gray)
-        if retval and decoded_info[0]:
-            return decoded_info[0]
-
-        # Attempt 2: High Contrast (For metallic plates or screens)
-        # Use CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(gray)
         
+        if retval and len(decoded_info)>0:
+            result = decoded_info[0]
+            if result: # Ensure the string itself isn't empty
+                return result
+
+        # 4. Enhanced Fallback for difficult/real-world barcodes
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
         retval, decoded_info, _ = detector.detectAndDecode(enhanced)
-        if retval and decoded_info[0]:
-            return decoded_info[0]
+        
+        if retval and len(decoded_info) > 0:
+            result = decoded_info[0]
+            if result:
+                return result
             
     except Exception as e:
         print(f"Scan error: {e}")
@@ -513,32 +517,44 @@ elif app_mode == "VIN Lookup":
                     captured_frame = camera_input_live(show_controls=False, key="vin_laptop_cam")
 
                 if captured_frame:
-                    # Display the "Screen" of what the camera sees
-                    st.image(captured_frame, caption="Align Barcode here", use_container_width="stretch")
+                    # 1. Display the Viewfinder Screen
+                    st.image(captured_frame, width="stretch")
                     
-                    # Instant Barcode Processing
+                    # 2. Fast Processing (Skip spinner to prevent UI flicker)
                     with st.spinner("Decoding..."):
                         scanned_vin = scan_vin_barcode(captured_frame)
-                        
-                        if scanned_vin and len(scanned_vin) == 17:
-                            st.success(f"✅ VIN Detected: **{scanned_vin}**")
-                            # Stop scanning immediately
+                    
+                    if scanned_vin:
+                        # Basic validation: VINs are 17 characters
+                        # If your barcodes are shorter (like generic ones), remove the '== 17' check
+                        if len(scanned_vin) == 17:
+                            st.success(f"🎯 VIN Detected: **{scanned_vin}**")
+                            
+                            # Stop camera and fetch detailed specs
                             st.session_state['scanning_active'] = False
-                            # Fetch data and auto-insert into Dashboard state
-                            specs = get_vehicle_specs_from_vin(scanned_vin)
-                            if specs:
-                                st.session_state['autofill_data'] = {
-                                    "Make": specs.get("Make"),
-                                    "Model": specs.get("Model"),
-                                    "Year": specs.get("Year"),
-                                    "Engine": specs.get("Engine"),
-                                    "Cylinders": specs.get("Cylinders"),
-                                    "Fuel": specs.get("Fuel"),
-                                    "Transmission": specs.get("Transmission"),
-                                    "Class": specs.get("Class")
-                                }
-                                st.success("✅ Data synced to Intelligence Dashboard!")
-                                st.rerun()
+                            
+                            with st.spinner("Fetching vehicle specifications..."):
+                                specs = get_vehicle_specs_from_vin(scanned_vin)
+                                
+                                if specs:
+                                    # Map to Dashboard Keys
+                                    st.session_state['autofill_data'] = {
+                                        "Make": specs.get("Make"),
+                                        "Model": specs.get("Model"),
+                                        "Year": specs.get("Year"),
+                                        "Engine": specs.get("Engine"),
+                                        "Cylinders": specs.get("Cylinders"),
+                                        "Fuel": specs.get("Fuel"),
+                                        "Transmission": specs.get("Transmission"),
+                                        "Class": specs.get("Class")
+                                    }
+                                    st.balloons()
+                                    st.rerun()
+                        else:
+                            st.warning(f"Detected: {scanned_vin} (Invalid VIN length)")
+                    else:
+                        # Visual hint to help the user
+                        st.caption("Searching for barcode... Try moving closer or adjusting light.")
             else:
                 st.info("Scanner is currently OFF. Click 'Start Scanner' to begin.")
 
