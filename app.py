@@ -80,6 +80,10 @@ def main():
 
 st.set_page_config(page_title="CarCo", page_icon="🚗", layout="wide")
 
+# --- INITIALIZE SESSION STATE ---
+if 'autofill_data' not in st.session_state:
+    st.session_state['autofill_data'] = None
+
 @st.cache_resource
 def load_data():
     # Updated to point to the new balanced model version
@@ -458,7 +462,7 @@ elif app_mode == "Intelligence Dashboard":
         st.header("Vehicle Specs")
         
         # Helper to retrieve autofilled data or defaults
-        data = st.session_state['autofill_data'] if st.session_state['autofill_data'] else {}
+        data = st.session_state.get('autofill_data') or {}
 
         # 1. Engine CC Logic (Converts L to CC)
         try:
