@@ -19,6 +19,9 @@ import math
 import pydeck as pdk
 import time
 from streamlit_autorefresh import st_autorefresh
+import smtplib
+import random
+from email.message import EmailMessage
 
 DB_FILE = "carco_data.db"
 
@@ -207,42 +210,62 @@ st.markdown("""
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
+def send_verification_email(receiver_email, code):
+    """Sends a 6-digit verification code to the user."""
+    sender_email = "your-email@gmail.com"
+    sender_password = "your-app-password" # Use Google App Password
+
+    msg = EmailMessage()
+    msg['Subject'] = "CarCO - Verify Your Account"
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+    msg.set_content(f"Your verification code for CarCO is: {code}\n\nThis code will expire shortly.")
+
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(sender_email, sender_password)
+            smtp.send_message(msg)
+        return True
+    except Exception as e:
+        print(f"Email Error: {e}")
+        return False
+
 def init_db():
-    """Creates the database and table if they don't exist."""
-    conn = sqlite3.connect('carco_data.db')
+    """Creates the database and table with an email column."""
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    # Using email as the primary identifier
     c.execute('''CREATE TABLE IF NOT EXISTS users 
-                 (username TEXT PRIMARY KEY, password TEXT)''')
+                 (email TEXT PRIMARY KEY, username TEXT, password TEXT)''')
     conn.commit()
     conn.close()
-    
 
-def add_user(username, password):
-    init_db() # Ensure table exists
+def add_user(email, username, password):
+    init_db()
     hashed_pswd = make_hashes(password)
-    conn = sqlite3.connect('carco_data.db')
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pswd))
+        c.execute("INSERT INTO users (email, username, password) VALUES (?, ?, ?)", 
+                  (email, username, hashed_pswd))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
-        # This triggers ONLY if the username actually exists in the DB
+        # Returns False if the email already exists
         return False
     finally:
         conn.close()
 
-def login_user(username, password):
+def login_user(email, password):
     init_db()
     hashed_pswd = make_hashes(password)
-    conn = sqlite3.connect('carco_data.db')
+    conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT password FROM users WHERE username=?", (username,))
+    # Verify password against the unique email
+    c.execute("SELECT username FROM users WHERE email=? AND password=?", (email, hashed_pswd))
     result = c.fetchone()
     conn.close()
-    if result and result[0] == hashed_pswd:
-        return True
-    return False
+    return result # Returns (username,) if successful, else None
 
 def check_hashes(password, hashed_text):
     if make_hashes(password) == hashed_text:
@@ -257,41 +280,125 @@ if 'username' not in st.session_state:
 if 'autofill_data' in st.session_state:
     data = st.session_state['autofill_data']
 
-if not st.session_state['logged_in']:
-    st.markdown("<br><br>", unsafe_allow_html=True)
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # Ensure schema includes email
+    c.execute('''CREATE TABLE IF NOT EXISTS users 
+                 (email TEXT PRIMARY KEY, username TEXT, password TEXT)''')
+    conn.commit()
+    conn.close()
+
+def add_user(email, username, password):
+    init_db()
+    hashed_pswd = make_hashes(password)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users (email, username, password) VALUES (?, ?, ?)", (email, username, hashed_pswd))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+def login_user(email, password):
+    init_db()
+    hashed_pswd = make_hashes(password)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT username FROM users WHERE email=? AND password=?", (email, hashed_pswd))
+    result = c.fetchone()
+    conn.close()
+    return result
+
+# --- ENHANCED UI LOGIC ---
+if not st.session_state.get('logged_in', False):
+    # 1. Branding Header
+    st.markdown("<h1 style='text-align: center;'>🚗 CarCO</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: gray;'>AI-Powered Emission Tracking & Analysis</h3>", unsafe_allow_html=True)
+    st.divider()
+
+    # 2. Centering the Form using Columns
     col1, col2, col3 = st.columns([1, 2, 1])
+
     with col2:
-        st.markdown("""<div style="background-color: var(--background-secondary-color); padding: 30px; border-radius: 15px; border-top: 5px solid #2E7D32; box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: center;">
-                <h2 style="margin: 0;">CarCo Access</h2></div>""", unsafe_allow_html=True)
-        tab1, tab2 = st.tabs(["Login", "Register"])
-        with tab1:
-            username = st.text_input("Username", key="login_user")
-            password = st.text_input("Password", type='password', key="login_pass")
-            if st.button("Login", key="login_btn"):
-                if login_user(username, password):
-                    st.session_state['logged_in'] = True
-                    st.session_state['username'] = username
-                    st.rerun()
+        # Using a Container for a card-like feel
+        with st.container(border=True):
+            mode = st.tabs(["Login", "Create Account"])
+
+            with mode[0]: # LOGIN TAB
+                st.subheader("Welcome Back")
+                l_email = st.text_input("Email", placeholder="name@example.com", key="l_email")
+                l_pass = st.text_input("Password", type="password", key="l_pass")
+                
+                if st.button("Sign In", type="primary", use_container_width=True):
+                    user_data = login_user(l_email, l_pass)
+                    if user_data:
+                        st.session_state["logged_in"] = True
+                        st.session_state["username"] = user_data[0]
+                        st.session_state["user_email"] = l_email
+                        st.success(f"Welcome back, {user_data[0]}!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Invalid credentials. Please try again.")
+
+            # --- SESSION STATE INITIALIZATION ---
+            if 'otp_sent' not in st.session_state:
+                st.session_state['otp_sent'] = False
+            if 'generated_otp' not in st.session_state:
+                st.session_state['generated_otp'] = None
+
+            # --- INSIDE YOUR REGISTRATION TAB ---
+            with mode[1]: # REGISTER TAB
+                if not st.session_state['otp_sent']:
+                    st.subheader("Step 1: Account Details")
+                    r_email = st.text_input("Email Address", placeholder="name@example.com", key="r_email")
+                    r_user = st.text_input("User Name", placeholder="e.g. JohnDoe123", key="r_user")
+                    r_pass = st.text_input("Password", type="password", key="r_pass")
+                    
+                    if st.button("Send Verification Code", use_container_width=True):
+                        if "@" in r_email and len(r_pass) >= 6:
+                            otp = str(random.randint(100000, 999999))
+                            if send_verification_email(r_email, otp):
+                                st.session_state['otp_sent'] = True
+                                st.session_state['generated_otp'] = otp
+                                # Store data temporarily to save after verification
+                                st.session_state['temp_user'] = {"email": r_email, "user": r_user, "pass": r_pass}
+                                st.rerun()
+                            else:
+                                st.error("Failed to send email. Check your SMTP settings.")
+                        else:
+                            st.warning("Invalid email or password too short.")
+
                 else:
-                    st.error("Incorrect Username or Password")
-        with tab2:
-            new_user = st.text_input("Choose a Username", key="reg_user").strip() # Added .strip() to prevent spaces
-            new_pass = st.text_input("Choose a Password", type='password', key="reg_pass")
-            confirm_pass = st.text_input("Confirm Password", type='password', key="reg_conf")
-            
-            if st.button("Create Account", key="reg_btn"):
-                if " " in new_user or " " in new_pass:
-                    st.warning("Username and Password cannot contain spaces.")
-                elif new_pass != confirm_pass: 
-                    st.warning("Passwords do not match!")
-                elif len(new_pass) < 4: 
-                    st.warning("Password must be at least 4 characters.")
-                else:
-                    if add_user(new_user, new_pass): 
-                        st.success("Account created!")
-                    else: 
-                        st.error("Username already exists.")
-            st.stop()
+                    st.subheader("Step 2: Verify Email")
+                    st.info(f"A code was sent to {st.session_state['temp_user']['email']}")
+                    otp_input = st.text_input("Enter 6-Digit Code")
+                    
+                    col_v1, col_v2 = st.columns(2)
+                    with col_v1:
+                        if st.button("Verify & Register", type="primary", use_container_width=True):
+                            if otp_input == st.session_state['generated_otp']:
+                                u = st.session_state['temp_user']
+                                if add_user(u['email'], u['user'], u['pass']):
+                                    st.success("Account verified and created!")
+                                    # Reset OTP state
+                                    st.session_state['otp_sent'] = False
+                                    st.session_state['generated_otp'] = None
+                                else:
+                                    st.error("This email is already registered.")
+                            else:
+                                st.error("Incorrect code. Please check your inbox.")
+                    
+                    with col_v2:
+                        if st.button("Back/Edit Info", use_container_width=True):
+                            st.session_state['otp_sent'] = False
+                            st.rerun()
+
+    st.stop()
 
 # --- 5. VIN LOOKUP HELPER ---
 
@@ -395,31 +502,38 @@ if app_mode == "Introduction":
 elif app_mode == "VIN Lookup":
     st.title("🔍 VIN Lookup")
 
+    col_input, col_guide = st.columns([1, 1])
+
     # --- TAB: MANUAL ENTRY (Features as before) ---
-    st.markdown("**Lookup by VIN**")
-    vin_input = st.text_input("Enter 17-character VIN", placeholder="e.g., 5UXZW4C55MDQGW...", key="manual_vin_entry")
-    
-    if st.button("Fetch & Autofill Specs"):
-        if len(vin_input) == 17:
-            with st.spinner("Searching database..."):
-                specs = get_vehicle_specs_from_vin(vin_input)
-                if specs and specs.get("Make"):
-                    st.session_state['autofill_data'] = {
-                        "Make": specs.get("Make"),
-                        "Model": specs.get("Model"),
-                        "Year": specs.get("Year"),
-                        "Engine": specs.get("Engine"),
-                        "Cylinders": specs.get("Cylinders"),
-                        "Fuel": specs.get("Fuel"),
-                        "Transmission": specs.get("Transmission"),
-                        "Class": specs.get("Class")
-                    }
-                    st.success(f"✅ Vehicle specs for {specs['Make']} {specs['Model']} synced!")
-                    st.rerun()
-                else:
-                    st.error("Vehicle not found. Please check the VIN.")
-        else:
-            st.warning("Please enter a valid 17-character VIN.")
+    with col_input:
+        st.markdown("**Lookup by VIN**")
+        vin_input = st.text_input("Enter 17-character VIN", placeholder="e.g., 5UXZW4C55MDQGW...", key="manual_vin_entry")
+        
+        if st.button("Fetch & Autofill Specs"):
+            if len(vin_input) == 17:
+                with st.spinner("Searching database..."):
+                    specs = get_vehicle_specs_from_vin(vin_input)
+                    if specs and specs.get("Make"):
+                        st.session_state['autofill_data'] = {
+                            "Make": specs.get("Make"),
+                            "Model": specs.get("Model"),
+                            "Year": specs.get("Year"),
+                            "Engine": specs.get("Engine"),
+                            "Cylinders": specs.get("Cylinders"),
+                            "Fuel": specs.get("Fuel"),
+                            "Transmission": specs.get("Transmission"),
+                            "Class": specs.get("Class")
+                        }
+                        st.success(f"✅ Vehicle specs for {specs['Make']} {specs['Model']} synced!")
+                        st.rerun()
+                    else:
+                        st.error("Vehicle not found. Please check the VIN.")
+            else:
+                st.warning("Please enter a valid 17-character VIN.")
+
+    with col_guide:
+        # Display the uploaded guide image
+        st.image("vin_guide.jpeg", caption="Where to find your VIN", use_container_width=True)
 
     # 3. Global Success View (Displaying fetched data)
     if st.session_state.get('autofill_data'):
@@ -460,7 +574,7 @@ elif app_mode == "Intelligence Dashboard":
     with st.sidebar:
         
         st.header("Vehicle Specs")
-        
+        current_year = datetime.now().year
         # Helper to retrieve autofilled data or defaults
         data = st.session_state.get('autofill_data') or {}
 
@@ -518,6 +632,21 @@ elif app_mode == "Intelligence Dashboard":
         elif "pickup" in api_class: c_idx = 4
         v_class = st.selectbox("Vehicle Class", class_list, index=c_idx)
 
+        # Default to the year from VIN if available, else current year
+        try:
+            vin_year = int(data.get("Year", current_year))
+        except:
+            vin_year = current_year
+            
+        purchase_year = st.number_input("Year of Registration/Purchase", 
+                                        min_value=1900, 
+                                        max_value=current_year, 
+                                        value=vin_year)
+        car_age = current_year - purchase_year
+        st.caption(f"Vehicle Age: **{car_age} Years**")
+
+        bs_standard = st.selectbox("Emission Standard (BS Model)", ["BS 1", "BS 2", "BS 3", "BS 4", "BS 6"], index=3)
+
     def get_gemini_suggestions(engine, fuel, v_class, trans, co2, grade):
         try:
             api_key = st.secrets.get("GEMINI_KEY")
@@ -528,6 +657,8 @@ elif app_mode == "Intelligence Dashboard":
             response = model.generate_content(prompt)
             return response.text
         except: return "⚠️ AI Insights currently unavailable."
+
+    
 
     # --- Prediction Execution ---
     # 1. Save the button click to session state so the report doesn't disappear on subsequent clicks
@@ -555,7 +686,17 @@ elif app_mode == "Intelligence Dashboard":
         if f"Vehicle Class_{c_map[v_class]}" in input_df.columns: input_df[f"Vehicle Class_{c_map[v_class]}"] = 1
         if f"Transmission_{specific_trans}" in input_df.columns: input_df[f"Transmission_{specific_trans}"] = 1
 
-        mid_p = bundle['mid'].predict(input_df)[0] * penalty
+        # 1. Get base prediction from the model
+        base_prediction = bundle['mid'].predict(input_df)[0]
+
+        # 2. Apply a 1.2% annual penalty for cars older than 3 years
+        if car_age > 3:
+            age_penalty = 1 + ((car_age - 3) * 0.012)
+        else:
+            age_penalty = 1.0
+
+        # 3. Final Prediction
+        mid_p = base_prediction * penalty * age_penalty
         low_p = bundle['lower'].predict(input_df)[0] * penalty
         high_p = bundle['upper'].predict(input_df)[0] * penalty
 
@@ -623,6 +764,44 @@ elif app_mode == "Intelligence Dashboard":
             ax.axis('equal')
             fig.patch.set_alpha(0)
             st.pyplot(fig)
+
+        # --- AGE-BASED & BS STANDARD ROAD LEGALITY CHECK ---
+        st.divider()
+        st.subheader("⚖️ Road Legality & Compliance Status")
+
+        is_illegal = False
+        reasons = []
+
+        # --- A. Age-Based Restrictions ---
+        if "Diesel" in fuel and car_age > 10:
+            is_illegal = True
+            reasons.append(f"Diesel vehicle age limit (10 years) exceeded. Current age: {car_age} years.")
+        elif ("Gasoline" in fuel or "Ethanol" in fuel) and car_age > 15:
+            is_illegal = True
+            reasons.append(f"Petrol vehicle age limit (15 years) exceeded. Current age: {car_age} years.")
+
+        # --- B. BS Standard Restrictions ---
+        if bs_standard in ["BS 1", "BS 2", "BS 3"]:
+            if purchase_year > 2017:
+                is_illegal = True
+                reasons.append(f"{bs_standard} vehicles purchased before 2017 are restricted.")
+            # Show maintenance warning for BS 1, 2, 3 regardless of purchase year
+            st.warning(f"⚠️ **Maintenance Alert:** {bs_standard} vehicles require frequent RC validation and strict maintenance. These models are increasingly restricted in major metropolitan zones.")
+
+        elif bs_standard == "BS 4":
+            if purchase_year < 2020:
+                is_illegal = True
+                reasons.append(f"BS 4 vehicles purchased before 2020 are restricted in this jurisdiction.")
+
+        # --- FINAL CONCLUSION ---
+        if is_illegal:
+            st.error(f"### 🚫 ILLEGAL ON ROAD")
+            for r in reasons:
+                st.write(f"- {r}")
+            st.info("💡 **Recommendation:** Consider the vehicle scrappage policy or upgrading to a BS 6 compliant model.")
+        else:
+            st.success(f"### ✅ ROAD LEGAL")
+            st.write(f"This {bs_standard} ({fuel}) vehicle meets current operational age and emission standards.")
 
         st.divider()
         st.markdown("### Advanced AI Insights (Gemini)")
@@ -899,7 +1078,7 @@ elif app_mode == "Live Trip Tracker":
         st.session_state['last_lat'] = None
         st.session_state['last_lon'] = None
         st.session_state['route_coords'] = []
-        
+
     # 2. Enforce Vehicle Calculation
     if 'mid_p' not in st.session_state:
         # If they haven't run the dashboard, show an alert and stop the page
@@ -982,36 +1161,36 @@ elif app_mode == "Live Trip Tracker":
 
     # 4. Active Tracking Logic
     if st.session_state['tracking_active']:
-        st_autorefresh(interval=4000, limit=None, key="live_gps_tracker")
+        # This keeps the app alive and triggers the code block below every 4 seconds
+        st_autorefresh(interval=2000, limit=None, key="live_gps_tracker")
         
         st.markdown("### Tracking is Active 🟢")
-        st.write("Drive safely! Your route is updating automatically.")
         
-        # Grab location from browser
+        # Automatically grab location from browser on every refresh
         location = streamlit_geolocation()
         
         if location and location.get('latitude') is not None:
             current_lat = location['latitude']
             current_lon = location['longitude']
             
-            # Save coordinate to our route list (Format: [Lon, Lat])
-            if not st.session_state['route_coords'] or st.session_state['route_coords'][-1] != [current_lon, current_lat]:
-                st.session_state['route_coords'].append([current_lon, current_lat])
-
-            # If we have a previous point, calculate distance
-            if st.session_state['last_lat'] is not None and st.session_state['last_lon'] is not None:
-                dist = calculate_distance(
-                    st.session_state['last_lat'], st.session_state['last_lon'], 
-                    current_lat, current_lon
-                )
+            # AUTOMATIC LOGIC: Check if this is a new coordinate
+            if not st.session_state['route_coords'] or \
+               (st.session_state['route_coords'][-1] != [current_lon, current_lat]):
                 
-                # Filter out GPS jitter (e.g., jumps less than 10 meters)
-                if dist > 0.01: 
-                    st.session_state['total_km'] += dist
-            
-            # Update last known location
-            st.session_state['last_lat'] = current_lat
-            st.session_state['last_lon'] = current_lon
+                # Update Distance Automatically
+                if st.session_state['last_lat'] is not None:
+                    dist = calculate_distance(
+                        st.session_state['last_lat'], st.session_state['last_lon'], 
+                        current_lat, current_lon
+                    )
+                    
+                    if dist > 0.005: # Filter jitter
+                        st.session_state['total_km'] += dist
+                
+                # Update State
+                st.session_state['route_coords'].append([current_lon, current_lat])
+                st.session_state['last_lat'] = current_lat
+                st.session_state['last_lon'] = current_lon
 
     # 5. Live Dashboard Display
     st.divider()
