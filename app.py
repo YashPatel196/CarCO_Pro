@@ -19,11 +19,42 @@ import math
 import pydeck as pdk
 import time
 from streamlit_autorefresh import st_autorefresh
-import smtplib
+import re
 import random
-from email.message import EmailMessage
+
+EMAILJS_SERVICE_ID = st.secrets.get("EMAILJS_SERVICE_ID", "service_xfj9vaj")
+EMAILJS_TEMPLATE_ID = st.secrets.get("EMAILJS_TEMPLATE_ID", "template_31porqa")
+EMAILJS_PUBLIC_KEY = st.secrets.get("EMAILJS_PUBLIC_KEY", "H_B5VmZ8zfz1-IaUG")
 
 DB_FILE = "carco_data.db"
+
+def extract_bot_numbers(text):
+    """Regex to extract numbers (including decimals) for EcoBot."""
+    numbers = re.findall(r"[-+]?\d*\.\d+|\d+", text)
+    if len(numbers) >= 3:
+        return [float(n) for n in numbers[:3]]
+    return None
+
+def create_bot_comparison_chart(prediction):
+    """Generates the Altair comparison chart for the EcoBot interface."""
+    benchmarks = pd.DataFrame({
+        'Category': ['Compact Car Avg', 'SUV Avg', 'Sports Car Avg', 'YOUR VEHICLE'],
+        'CO2_gkm': [130, 195, 290, prediction],
+        'Type': ['Benchmark', 'Benchmark', 'Benchmark', 'Your Result']
+    })
+    
+    base = alt.Chart(benchmarks).encode(
+        x=alt.X('CO2_gkm', title='CO2 Emissions (g/km)'),
+        y=alt.Y('Category', sort='-x', title=None)
+    )
+    
+    bars = base.mark_bar(opacity=0.5, color='gray').transform_filter(alt.datum.Type == 'Benchmark')
+    user_bar = base.mark_bar(color='#2ecc71').transform_filter(alt.datum.Type == 'Your Result')
+    text = base.mark_text(align='left', baseline='middle', dx=3).encode(text='CO2_gkm:Q')
+    
+    return alt.layer(bars, user_bar, text).properties(
+        title="How your vehicle compares to common benchmarks"
+    ).configure_axis(labelFontSize=12, titleFontSize=14)
 
 # --- HAVERSINE DISTANCE FUNCTION ---
 def calculate_distance(lat1, lon1, lat2, lon2):
@@ -211,23 +242,31 @@ def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
 def send_verification_email(receiver_email, code):
-    """Sends a 6-digit verification code to the user."""
-    sender_email = "your-email@gmail.com"
-    sender_password = "your-app-password" # Use Google App Password
-
-    msg = EmailMessage()
-    msg['Subject'] = "CarCO - Verify Your Account"
-    msg['From'] = sender_email
-    msg['To'] = receiver_email
-    msg.set_content(f"Your verification code for CarCO is: {code}\n\nThis code will expire shortly.")
+    """Sends verification code using the EmailJS REST API."""
+    url = "https://api.emailjs.com/api/v1.0/email/send"
+    
+    print(f"DEBUG: Sending to '{receiver_email}' (Type: {type(receiver_email)})")
+    # This structure must match your EmailJS Template variables
+    data = {
+        "service_id": EMAILJS_SERVICE_ID,
+        "template_id": EMAILJS_TEMPLATE_ID,
+        "user_id": EMAILJS_PUBLIC_KEY,
+        "template_params": {
+            "email": receiver_email.strip(),      # {{to_email}} in dashboard
+            "verification_code": code,       # {{verification_code}} in dashboard
+            "app_name": "CarCO AI"
+        }
+    }
 
     try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(sender_email, sender_password)
-            smtp.send_message(msg)
-        return True
+        response = requests.post(url, json=data, timeout=10)
+        if response.status_code == 200:
+            return True
+        else:
+            st.error(f"EmailJS Error: {response.text}")
+            return False
     except Exception as e:
-        print(f"Email Error: {e}")
+        st.error(f"Connection Error: {e}")
         return False
 
 def init_db():
@@ -353,25 +392,30 @@ if not st.session_state.get('logged_in', False):
 
             # --- INSIDE YOUR REGISTRATION TAB ---
             with mode[1]: # REGISTER TAB
-                if not st.session_state['otp_sent']:
+                if not st.session_state.get('otp_sent', False):
                     st.subheader("Step 1: Account Details")
                     r_email = st.text_input("Email Address", placeholder="name@example.com", key="r_email")
                     r_user = st.text_input("User Name", placeholder="e.g. JohnDoe123", key="r_user")
                     r_pass = st.text_input("Password", type="password", key="r_pass")
                     
                     if st.button("Send Verification Code", use_container_width=True):
-                        if "@" in r_email and len(r_pass) >= 6:
+                        if r_email and r_user and r_pass:
                             otp = str(random.randint(100000, 999999))
-                            if send_verification_email(r_email, otp):
+                            
+                            with st.spinner("Sending secure code..."):
+                                success = send_verification_email(r_email, otp)
+                            
+                            if success:
                                 st.session_state['otp_sent'] = True
                                 st.session_state['generated_otp'] = otp
-                                # Store data temporarily to save after verification
                                 st.session_state['temp_user'] = {"email": r_email, "user": r_user, "pass": r_pass}
+                                st.toast("Code sent! Please check your inbox.", icon="📧")
+                                time.sleep(1)
                                 st.rerun()
                             else:
-                                st.error("Failed to send email. Check your SMTP settings.")
+                                st.error("Failed to send email. Check your EmailJS credentials.")
                         else:
-                            st.warning("Invalid email or password too short.")
+                            st.warning("Please fill in all fields.")
 
                 else:
                     st.subheader("Step 2: Verify Email")
@@ -451,12 +495,13 @@ with st.sidebar:
     # Added Navigation
     
     app_mode = st.radio("Navigate", [
+        "EcoBot AI",
         "Introduction", 
         "VIN Lookup", 
         "Intelligence Dashboard", 
         "Eco Leaderboard/Compare",
         "Live Trip Tracker"
-    ])
+    ],index=1)
     
     if st.button("Log Out", type="secondary"):
         st.session_state['logged_in'] = False
@@ -497,6 +542,95 @@ if app_mode == "Introduction":
         
     with st.expander("Can I use this for Electric Vehicles (EVs)?"):
         st.write("Currently, CarCo focuses on Internal Combustion Engine (ICE) and Hybrid vehicles. Since EVs have zero tailpipe emissions, they would technically always receive an 'A+' grade in this specific tool.")
+
+#---ChatBot---
+elif app_mode == "EcoBot AI":
+    # --- App Knowledge Base (Updated with Trip Tracking) ---
+    APP_KNOWLEDGE = {
+        "how to use": "To navigate the CarCo application and access its full suite of environmental intelligence tools, follow these steps:\n1. **Access the Sidebar**: Use the sidebar on the left to switch between modules like the Intelligence Dashboard, VIN Lookup, and Eco Leaderboard.\n2. **Start Your Analysis**: Begin in the Intelligence Dashboard to input data manually or use the VIN Lookup to automatically fill specs.\n3. **View Results**: After entering data, the dashboard displays CO2 predictions, Eco Grades, and performance breakdowns.\n4. **Explore the Rankings**: Head to the Eco Leaderboard/Compare section to see global ranks or perform side-by-side comparisons.\n5. **Manage Your Account**: Use the Login/Sign Up section to save your data and track history.",
+        "features": "CarCo includes: \n1. **AI Eco-Grading (A-F)** \n2. **VIN Decoder** \n3. **PDF Environmental Reports** \n4. **Global Leaderboards** \n5. **Live Trip Tracking**.",
+        "vin": "The VIN is a unique 17-character code, usually printed on a white sticker with a barcode. \n**Top Locations:** \n- **Driver’s Side Dashboard**: Peer through the lower corner of the windshield. \n- **Driver’s Door Jamb**: Look for a sticker on the door post or near the latch. \n- **Official Documentation**: Your registration, title, or insurance policy. \n- **Under the Hood**: Check the engine compartment or front of the engine block. \n- **Alternative Spots**: Under the spare tire in the trunk or on the rear wheel well.",
+        "eco grade": "Our Eco Grades (A to F) are based on how your car's CO2 emissions compare to global environmental standards. 'A' is the most efficient!",
+        "contact": "For support or inquiries, please contact the CarCo Dev Team via the 'About Us' section or at support@carco-vision.com.",
+        "leaderboard": "To see the global rankings based on vehicle efficiency, navigate to the Eco Leaderboard/Compare section from the sidebar. This feature displays a real-time list of users and their vehicles, ranked from the lowest to highest CO2 emissions.\nTo get your name on the leaderboard, follow these steps:\n1. **Analyze Your Vehicle**: First, generate a CO2 prediction using the Intelligence Dashboard.\n2. **Join the Rankings**: Once your emissions are calculated, simply enter your vehicle model name to submit your score.\n3. **Automatic Entry**: If you used the VIN Lookup tool, the system will automatically detect your vehicle's name for you.",
+        "report": "After running an analysis in the Intelligence Dashboard, you can use the 'Download Report' button to generate an official PDF certificate containing your vehicle specs, CO2 predictions, and performance charts.",
+        "co2 emission": "To calculate your vehicle's CO2 emissions, you can manually enter your technical specifications into the Intelligence Dashboard via the sidebar. Alternatively, you can use the VIN Lookup section to automatically fetch and autofill your vehicle's details directly from the database.",
+        "compare": "To compare the environmental impact of two different cars, navigate to the Eco Leaderboard/Compare section via the sidebar. In the Compare Vehicles area, you can select any two entries from the current leaderboard. Once selected, the system will perform a side-by-side 'Battle,' highlighting the technical differences and officially declaring a Winner based on which vehicle has the lower CO2 emissions.",
+        "carco": "CarCo is an AI-powered platform providing 'Eco-Transparency' by predicting vehicle CO2 emissions using advanced machine learning. By analyzing technical specs like engine size and fuel consumption, it assigns intuitive A–F Eco Grades.",
+        "trip": "To track your real-time journey, navigate to the **Live Tracking** section in the sidebar and select the **Start Trip** button. Ensure you click the GPS icon to grant location permissions, which allows the system to monitor your movement accurately. Once your journey is finished, simply click **Stop Tracking** to end the session. You can review your past five trips at the bottom of the page for quick reference.\n\n**Note:** You must first calculate your $CO_2$ emissions in the Intelligence Dashboard to unlock this feature. If you need help with that, just ask: 'How do I calculate my CO2 emissions?'",
+        "account": "To save your vehicle history and leaderboard scores, please visit the **Login/Sign Up** section in the sidebar. Creating an account allows you to access your personal dashboard from any device.",
+        "accuracy": "Our predictions are powered by a Random Forest Regressor trained on thousands of vehicle data points. While highly accurate for standard driving conditions, real-world emissions can vary based on driving style and vehicle maintenance.",
+        "privacy": "Your privacy is a priority. VIN data is used only for specification lookup via the NHTSA API, and location data for Live Tracking is only processed during your active session to calculate trip efficiency.",
+        "impact": "By understanding your vehicle's Eco Grade, you can make informed decisions about maintenance, driving habits, or future vehicle purchases to help reduce your carbon footprint."
+    }
+
+    st.title("🤖 CarCo Assistant")
+    st.info("I can help you navigate the app, explain Eco Grades, or help with VIN lookups.")
+
+    # --- Initialize Chat History ---
+    if "help_messages" not in st.session_state:
+        st.session_state.help_messages = [
+            {"role": "assistant", "content": "Hello! I'm your CarCo guide. Ask me things like 'How do I get an Eco Grade?' or 'What is a VIN?'"}
+        ]
+
+    # --- Display Chat History ---
+    for message in st.session_state.help_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # --- Chat Logic ---
+    if prompt := st.chat_input("Type your question here..."):
+        st.session_state.help_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            response_placeholder = st.empty()
+            p = prompt.lower()
+            
+            # --- Updated keyword matching including Trip Tracking ---
+            if any(word in p for word in ["trip", "live", "track"]):
+                answer = APP_KNOWLEDGE["trip"]
+            elif "report" in p:
+                answer = APP_KNOWLEDGE["report"]
+            elif "calculate" in p or "find co2" in p:
+                answer = APP_KNOWLEDGE["co2 emission"]
+            elif "compare" in p or "comparison" in p:
+                answer = APP_KNOWLEDGE["compare"]
+            elif "leaderboard" in p:
+                answer = APP_KNOWLEDGE["leaderboard"]
+            elif "vin" in p:
+                answer = APP_KNOWLEDGE["vin"]
+            elif "carco" in p:
+                answer = APP_KNOWLEDGE["carco"]
+            elif any(word in p for word in ["guide", "navigate"]):
+                answer = APP_KNOWLEDGE["how to use"]
+            elif any(word in p for word in ["feature", "do", "can this"]):
+                answer = APP_KNOWLEDGE["features"]
+            elif any(word in p for word in ["grade", "rating", "score", "letter"]):
+                answer = APP_KNOWLEDGE["eco grade"]
+            elif any(word in p for word in ["contact", "help", "email", "support"]):
+                answer = APP_KNOWLEDGE["contact"]
+            elif any(word in p for word in ["accuracy", "accurate", "reliable", "correct"]):
+                answer = APP_KNOWLEDGE["accuracy"]
+            elif any(word in p for word in ["account", "login", "sign up", "save", "profile"]):
+                answer = APP_KNOWLEDGE["account"]
+            elif any(word in p for word in ["privacy", "data", "secure", "safe"]):
+                answer = APP_KNOWLEDGE["privacy"]
+            elif any(word in p for word in ["impact", "environment", "carbon footprint", "climate"]):
+                answer = APP_KNOWLEDGE["impact"]
+            else:
+                answer = "I'm specialized in CarCo navigation! Try asking about **VIN Lookup**, **Eco Grades**, or **How to navigate the app**."
+
+            # Typing effect
+            displayed_text = ""
+            for char in answer:
+                displayed_text += char
+                response_placeholder.markdown(displayed_text + "▌")
+                time.sleep(0.005) 
+            response_placeholder.markdown(answer)
+
+        st.session_state.help_messages.append({"role": "assistant", "content": answer})
 
 # --- MODE 1.5: VIN LOOKUP PAGE ---
 elif app_mode == "VIN Lookup":
@@ -986,8 +1120,26 @@ elif app_mode == "Intelligence Dashboard":
         # 2. Create Pie Chart in memory
         buf_pie = io.BytesIO()
         fig_pie, ax_pie = plt.subplots(figsize=(4, 4))
-        ax_pie.pie([score, 100-score])
-        fig_pie.savefig(buf_pie, format="png", bbox_inches='tight')
+        # 1. Define Labels and Colors
+        # 'score' represents the Eco Score/Efficiency, 100-score is the remaining impact
+        labels = ['Eco Score', 'Remaining']
+        colors = ["#2935B4", "#C6C6C6"]  # Green for Score, Orange for Remaining
+
+        # 2. Create the Pie Chart with labels and percentages
+        ax_pie.pie(
+            [score, 100-score], 
+            labels=labels, 
+            autopct='%1.1f%%', 
+            startangle=140, 
+            colors=colors,
+            textprops={'fontsize': 10, 'weight': 'bold'}
+        )
+
+        # 3. Add a Title for the PDF
+        ax_pie.set_title("Vehicle Efficiency Breakdown", fontsize=12)
+
+        # 4. Save to memory
+        fig_pie.savefig(buf_pie, format="png", bbox_inches='tight', transparent=True)
         plt.close(fig_pie)
 
         # 3. Generate PDF using the buffers instead of file paths
@@ -1122,6 +1274,7 @@ elif app_mode == "Live Trip Tracker":
                     # Create a dedicated table for trips if it doesn't exist yet
                     c.execute('''CREATE TABLE IF NOT EXISTS live_trips
                                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                  user_email TEXT,
                                   trip_date TEXT,
                                   distance_km REAL,
                                   co2_emitted_g REAL)''')
@@ -1130,8 +1283,8 @@ elif app_mode == "Live Trip Tracker":
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     
                     # Insert the new trip data
-                    c.execute("INSERT INTO live_trips (trip_date, distance_km, co2_emitted_g) VALUES (?, ?, ?)", 
-                              (timestamp, final_km, final_co2))
+                    c.execute("INSERT INTO live_trips (user_email, trip_date, distance_km, co2_emitted_g) VALUES (?, ?, ?, ?)", 
+                            (st.session_state['user_email'], timestamp, final_km, final_co2))
                     
                     conn.commit()
                     conn.close()
@@ -1272,10 +1425,14 @@ elif app_mode == "Live Trip Tracker":
     
     try:
         conn = sqlite3.connect(DB_FILE)
-        history_df = pd.read_sql_query(
-            "SELECT trip_date, distance_km, co2_emitted_g FROM live_trips ORDER BY id DESC LIMIT 5", 
-            conn
-        )
+        # --- UPDATED: Added WHERE clause to filter by current user ---
+        query = "SELECT trip_date, distance_km, co2_emitted_g FROM live_trips WHERE user_email = ? ORDER BY id DESC LIMIT 5"
+        history_df = pd.read_sql_query(query, conn, params=(st.session_state['user_email'],))
+        
+        # --- UPDATED: Calculate lifetime CO2 for THIS user only ---
+        c = conn.cursor()
+        c.execute("SELECT SUM(co2_emitted_g) FROM live_trips WHERE user_email = ?", (st.session_state['user_email'],))
+        total_historical_co2 = c.fetchone()[0] or 0.0
         conn.close()
         
         if not history_df.empty:
@@ -1308,6 +1465,7 @@ elif app_mode == "Live Trip Tracker":
                         max_value=max(500.0, max_co2),
                     ),
                 }
+                
             )
             
             # Fetch total lifetime CO2 for a summary metric
