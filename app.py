@@ -32,11 +32,43 @@ DB_FILE = "carco_data.db"
 # PWA Injection
 components.html(
     """
-    <link rel="manifest" href="/manifest.json">
     <script>
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js');
-      }
+    // 1. Define the Manifest
+    const myManifest = {
+      "name": "CarCO Emission Tracker",
+      "short_name": "CarCO",
+      "start_url": ".",
+      "display": "standalone",
+      "background_color": "#0E1117",
+      "theme_color": "#FF4B4B",
+      "icons": [{
+        "src": "CarCO_512.jpeg",
+        "sizes": "512x512",
+        "type": "image/png"
+      },{
+      "src": "CarCO_192.jpeg",
+      "sizes": "192x192",
+      "type": "image/png"
+    }]
+    };
+
+    // 2. Inject Manifest
+    const manifestStr = JSON.stringify(myManifest);
+    const blob = new Blob([manifestStr], {type: 'application/json'});
+    const manifestURL = URL.createObjectURL(blob);
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = manifestURL;
+    document.head.appendChild(link);
+
+    // 3. Register Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('data:text/javascript;base64,' + btoa(`
+        self.addEventListener('fetch', (event) => {
+          event.respondWith(fetch(event.request));
+        });
+      `));
+    }
     </script>
     """,
     height=0,
