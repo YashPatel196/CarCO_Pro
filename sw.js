@@ -3,6 +3,9 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('fetch', (e) => {
-  // Required for PWA installability, though Streamlit requires active internet
-  e.respondWith(fetch(e.request));
+  e.respondWith(
+    fetch(e.request).catch(() => {
+      return new Response("Offline mode not fully supported yet.");
+    })
+  );
 });
