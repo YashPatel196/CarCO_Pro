@@ -1056,8 +1056,8 @@ elif app_mode == "Intelligence Dashboard":
         curr_y = pdf.get_y()
         
         # FPDF can accept a 'BytesIO' object directly as if it were a file path
-        pdf.image(bar_img_bytes, x=15, y=curr_y + 5, w=100)
-        pdf.image(pie_img_bytes, x=125, y=curr_y + 10, w=65)
+        pdf.image(bar_img_bytes, x=15, y=curr_y + 5, w=100, type='PNG')
+        pdf.image(pie_img_bytes, x=125, y=curr_y + 10, w=65, type='PNG')
         
         return bytes(pdf.output(dest='S'))
 
