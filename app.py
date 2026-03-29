@@ -63,11 +63,15 @@ components.html(
 
     // 3. Register Service Worker
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('data:text/javascript;base64,' + btoa(`
-        self.addEventListener('fetch', (event) => {
-          event.respondWith(fetch(event.request));
-        });
-      `));
+      const swCode = `
+        self.addEventListener('install', (e) => self.skipWaiting());
+        self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request)));
+      `;
+      const swBlob = new Blob([swCode], {type: 'text/javascript'});
+      const swUrl = URL.createObjectURL(swBlob);
+      navigator.serviceWorker.register(swUrl).then(() => {
+        console.log('Service Worker Registered');
+      });
     }
     </script>
     """,
