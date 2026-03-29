@@ -1011,6 +1011,11 @@ elif app_mode == "Intelligence Dashboard":
         pdf = FPDF()
         pdf.add_page()
         
+        buf_bar = io.BytesIO()
+        plt.savefig(buf_bar, format='png')
+        buf_pie = io.BytesIO()
+        plt.savefig(buf_pie, format='png')
+
         buf_bar.seek(0)
         buf_pie.seek(0)
 
