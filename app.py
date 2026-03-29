@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import tempfile
 import pickle
 import numpy as np
 from datetime import datetime
@@ -1050,20 +1051,24 @@ elif app_mode == "Intelligence Dashboard":
         pdf.cell(0, 10, f"Grade: {results['grade']} | Score: {results['score']}/100", ln=True, align='C')
         
         # --- The Magic Part: Loading from memory ---
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as bar_tmp, \
+             tempfile.NamedTemporaryFile(delete=False, suffix=".png") as pie_tmp:
+        
+            bar_tmp.write(bar_img_bytes.getvalue())
+            pie_tmp.write(pie_img_bytes.getvalue())
+            
+            bar_path = bar_tmp.name
+            pie_path = pie_tmp.name
+        
         curr_y = pdf.get_y()
 
-        bar_img_bytes.seek(0)
-        pie_img_bytes.seek(0)
-        
-        if not hasattr(bar_img_bytes, 'name'):
-            bar_img_bytes.name = "bar_plot.png"
-        if not hasattr(pie_img_bytes, 'name'):
-            pie_img_bytes.name = "pie_plot.png"
-
         # FPDF can accept a 'BytesIO' object directly as if it were a file path
-        pdf.image(bar_img_bytes, x=15, y=curr_y + 5, w=100)
-        pdf.image(pie_img_bytes, x=125, y=curr_y + 10, w=65)
+        pdf.image(bar_path, x=15, y=curr_y + 5, w=100)
+        pdf.image(pie_path, x=125, y=curr_y + 10, w=65)
         
+        os.remove(bar_path)
+        os.remove(pie_path)
+
         return bytes(pdf.output(dest='S'))
 
     # --- 3. THE TRIGGER ---
