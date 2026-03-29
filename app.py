@@ -1008,6 +1008,7 @@ elif app_mode == "Intelligence Dashboard":
 # --- 2. THE SINGLE GENERATOR FUNCTION ---
     def create_pdf_report(v_specs, results, bar_img_bytes, pie_img_bytes):
         pdf = CarCO_Report()
+        pdf = FPDF()
         pdf.add_page()
         
         buf_bar.seek(0)
