@@ -1008,16 +1008,7 @@ elif app_mode == "Intelligence Dashboard":
 # --- 2. THE SINGLE GENERATOR FUNCTION ---
     def create_pdf_report(v_specs, results, bar_img_bytes, pie_img_bytes):
         pdf = CarCO_Report()
-        pdf = FPDF()
         pdf.add_page()
-        
-        buf_bar = io.BytesIO()
-        plt.savefig(buf_bar, format='png')
-        buf_pie = io.BytesIO()
-        plt.savefig(buf_pie, format='png')
-
-        buf_bar.seek(0)
-        buf_pie.seek(0)
 
         # Title Section
         pdf.set_text_color(0, 0, 0)
@@ -1060,7 +1051,13 @@ elif app_mode == "Intelligence Dashboard":
         
         # --- The Magic Part: Loading from memory ---
         curr_y = pdf.get_y()
+
+        bar_img_bytes.seek(0)
+        pie_img_bytes.seek(0)
         
+        bar_img_bytes.name = "bar_chart.png"
+        pie_img_bytes.name = "pie_chart.png"
+
         # FPDF can accept a 'BytesIO' object directly as if it were a file path
         pdf.image(bar_img_bytes, x=15, y=curr_y + 5, w=100)
         pdf.image(pie_img_bytes, x=125, y=curr_y + 10, w=65)
