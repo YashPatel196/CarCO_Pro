@@ -269,6 +269,15 @@ def send_verification_email(receiver_email, code):
         st.error(f"Connection Error: {e}")
         return False
 
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # Ensure schema includes email
+    c.execute('''CREATE TABLE IF NOT EXISTS users 
+                 (email TEXT PRIMARY KEY, username TEXT, password TEXT)''')
+    conn.commit()
+    conn.close()
+
 def add_user(email, username, password):
     init_db()
     hashed_pswd = make_hashes(password)
@@ -309,38 +318,6 @@ if 'username' not in st.session_state:
 if 'autofill_data' in st.session_state:
     data = st.session_state['autofill_data']
 
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Ensure schema includes email
-    c.execute('''CREATE TABLE IF NOT EXISTS users 
-                 (email TEXT PRIMARY KEY, username TEXT, password TEXT)''')
-    conn.commit()
-    conn.close()
-
-def add_user(email, username, password):
-    init_db()
-    hashed_pswd = make_hashes(password)
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    try:
-        c.execute("INSERT INTO users (email, username, password) VALUES (?, ?, ?)", (email, username, hashed_pswd))
-        conn.commit()
-        return True
-    except sqlite3.IntegrityError:
-        return False
-    finally:
-        conn.close()
-
-def login_user(email, password):
-    init_db()
-    hashed_pswd = make_hashes(password)
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT username FROM users WHERE email=? AND password=?", (email, hashed_pswd))
-    result = c.fetchone()
-    conn.close()
-    return result
 
 # --- ENHANCED UI LOGIC ---
 if not st.session_state.get('logged_in', False):
