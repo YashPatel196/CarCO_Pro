@@ -21,12 +21,26 @@ import time
 from streamlit_autorefresh import st_autorefresh
 import re
 import random
+import streamlit.components.v1 as components
 
 EMAILJS_SERVICE_ID = st.secrets.get("EMAILJS_SERVICE_ID", "service_xfj9vaj")
 EMAILJS_TEMPLATE_ID = st.secrets.get("EMAILJS_TEMPLATE_ID", "template_31porqa")
 EMAILJS_PUBLIC_KEY = st.secrets.get("EMAILJS_PUBLIC_KEY", "H_B5VmZ8zfz1-IaUG")
 
 DB_FILE = "carco_data.db"
+
+# PWA Injection
+components.html(
+    """
+    <link rel="manifest" href="/manifest.json">
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js');
+      }
+    </script>
+    """,
+    height=0,
+)
 
 def extract_bot_numbers(text):
     """Regex to extract numbers (including decimals) for EcoBot."""
