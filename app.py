@@ -1055,8 +1055,10 @@ elif app_mode == "Intelligence Dashboard":
         bar_img_bytes.seek(0)
         pie_img_bytes.seek(0)
         
-        bar_img_bytes.name = "bar_chart.png"
-        pie_img_bytes.name = "pie_chart.png"
+        if not hasattr(bar_img_bytes, 'name'):
+            bar_img_bytes.name = "bar_plot.png"
+        if not hasattr(pie_img_bytes, 'name'):
+            pie_img_bytes.name = "pie_plot.png"
 
         # FPDF can accept a 'BytesIO' object directly as if it were a file path
         pdf.image(bar_img_bytes, x=15, y=curr_y + 5, w=100)
