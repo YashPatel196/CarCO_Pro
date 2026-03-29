@@ -1069,7 +1069,12 @@ elif app_mode == "Intelligence Dashboard":
         os.remove(bar_path)
         os.remove(pie_path)
 
-        return bytes(pdf.output(dest='S'))
+        pdf_output = pdf.output(dest='S')
+    
+        if isinstance(pdf_output, str):
+            # If it's a string, convert to bytes using latin-1 (PDF standard)
+            return pdf_output.encode('latin-1')
+        return bytes(pdf_output)
 
     # --- 3. THE TRIGGER ---
     st.divider()
