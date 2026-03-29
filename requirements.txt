@@ -7,5 +7,6 @@ altair
 matplotlib
 requests
 streamlit-geolocation
-streamlit-autorefresh
 pydeck
+streamlit-autorefresh
+scikit-learn
