@@ -269,16 +269,6 @@ def send_verification_email(receiver_email, code):
         st.error(f"Connection Error: {e}")
         return False
 
-def init_db():
-    """Creates the database and table with an email column."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    # Using email as the primary identifier
-    c.execute('''CREATE TABLE IF NOT EXISTS users 
-                 (email TEXT PRIMARY KEY, username TEXT, password TEXT)''')
-    conn.commit()
-    conn.close()
-
 def add_user(email, username, password):
     init_db()
     hashed_pswd = make_hashes(password)
