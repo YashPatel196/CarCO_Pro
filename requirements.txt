@@ -1,7 +1,7 @@
 streamlit
 pandas
 numpy
-fpdf
+fpdf2
 google-generativeai
 altair
 matplotlib
