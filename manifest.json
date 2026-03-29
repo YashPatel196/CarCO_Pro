@@ -8,12 +8,12 @@
   "description": "Calculate and compare vehicle CO2 emissions.",
   "icons": [
     {
-      "src": "CarCO-icon.jpeg",
+      "src": "CarCO_192.jpeg",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "CarCO-icon2.jpeg",
+      "src": "CarCO_512.jpeg",
       "sizes": "512x512",
       "type": "image/png"
     }
