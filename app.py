@@ -21,62 +21,12 @@ import time
 from streamlit_autorefresh import st_autorefresh
 import re
 import random
-import streamlit.components.v1 as components
 
 EMAILJS_SERVICE_ID = st.secrets.get("EMAILJS_SERVICE_ID", "service_xfj9vaj")
 EMAILJS_TEMPLATE_ID = st.secrets.get("EMAILJS_TEMPLATE_ID", "template_31porqa")
 EMAILJS_PUBLIC_KEY = st.secrets.get("EMAILJS_PUBLIC_KEY", "H_B5VmZ8zfz1-IaUG")
 
 DB_FILE = "carco_data.db"
-
-# PWA Injection
-components.html(
-    """
-    <script>
-    // 1. Define the Manifest
-    const myManifest = {
-      "name": "CarCO Emission Tracker",
-      "short_name": "CarCO",
-      "start_url": ".",
-      "display": "standalone",
-      "background_color": "#0E1117",
-      "theme_color": "#FF4B4B",
-      "icons": [{
-        "src": "CarCO_512.jpeg",
-        "sizes": "512x512",
-        "type": "image/png"
-      },{
-      "src": "CarCO_192.jpeg",
-      "sizes": "192x192",
-      "type": "image/png"
-    }]
-    };
-
-    // 2. Inject Manifest
-    const manifestStr = JSON.stringify(myManifest);
-    const blob = new Blob([manifestStr], {type: 'application/json'});
-    const manifestURL = URL.createObjectURL(blob);
-    const link = document.createElement('link');
-    link.rel = 'manifest';
-    link.href = manifestURL;
-    document.head.appendChild(link);
-
-    // 3. Register Service Worker
-    if ('serviceWorker' in navigator) {
-      const swCode = `
-        self.addEventListener('install', (e) => self.skipWaiting());
-        self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request)));
-      `;
-      const swBlob = new Blob([swCode], {type: 'text/javascript'});
-      const swUrl = URL.createObjectURL(swBlob);
-      navigator.serviceWorker.register(swUrl).then(() => {
-        console.log('Service Worker Registered');
-      });
-    }
-    </script>
-    """,
-    height=0,
-)
 
 def extract_bot_numbers(text):
     """Regex to extract numbers (including decimals) for EcoBot."""
@@ -1060,6 +1010,9 @@ elif app_mode == "Intelligence Dashboard":
         pdf = CarCO_Report()
         pdf.add_page()
         
+        buf_bar.seek(0)
+        buf_pie.seek(0)
+
         # Title Section
         pdf.set_text_color(0, 0, 0)
         pdf.set_font("Arial", "B", 20)
