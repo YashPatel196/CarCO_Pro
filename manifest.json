@@ -1,7 +1,7 @@
 {
   "name": "CarCo - Eco-Friendly Tracker",
   "short_name": "CarCo",
-  "start_url": ".",
+  "start_url": "/CarCO_Pro/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#2E7D32",
